@@ -138,9 +138,11 @@ let orgSdk = null;
 let avatar = null;
 let activeOrgAddress = null;
 let lastTxHashes = [];
-let cachedOrgBalances = [];
 let cachedWithdrawableAttoCircles = 0n;
 let activeSafeOwners = [];
+let fundingInProgress = false;
+let trustSearchDebounceTimer = null;
+let trustSearchRequestId = 0;
 const sessionOrgSafesByOwner = new Map();
 
 /* ── DOM ─────────────────────────────────────────────────────────── */
@@ -166,17 +168,15 @@ const orgAddrDisplay = document.getElementById('org-address-display');
 const orgBalanceDisplay = document.getElementById('org-balance-display');
 const trustAddrInput = document.getElementById('trust-address');
 const addTrustBtn = document.getElementById('add-trust-btn');
+const trustSearchResultsEl = document.getElementById('trust-search-results');
 const trustListEl = document.getElementById('trust-list');
 const safeSignerAddressInput = document.getElementById('safe-signer-address');
 const addSafeSignerBtn = document.getElementById('add-safe-signer-btn');
 const safeSignersListEl = document.getElementById('safe-signers-list');
 const fundFaucetHintEl = document.getElementById('fund-faucet-hint');
-const fundRecipientAddressSelect = document.getElementById('fund-recipient-address');
+const fundRecipientListEl = document.getElementById('fund-recipient-list');
 const fundAmountXdaiInput = document.getElementById('fund-amount-xdai');
-const fundFaucetBtn = document.getElementById('fund-faucet-btn');
-const balancesEl = document.getElementById('balances-list');
 const withdrawAvailableEl = document.getElementById('withdraw-available');
-const withdrawTargetAddressInput = document.getElementById('withdraw-target-address');
 const withdrawAmountInput = document.getElementById('withdraw-amount-circles');
 const withdrawMaxBtn = document.getElementById('withdraw-max-btn');
 const withdrawBalanceBtn = document.getElementById('withdraw-balance-btn');
@@ -218,8 +218,16 @@ function isPasskeyAutoConnectError(err) {
 }
 
 function truncAddr(a) {
-  if (!a || a.length < 10) return a || '';
-  return a.slice(0, 6) + '\u2026' + a.slice(-4);
+  return a || '';
+}
+
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 function txLinks(hashes) {
@@ -231,20 +239,6 @@ function txLinks(hashes) {
     .join('<br>');
 }
 
-function formatNumberAmount(value) {
-  if (!Number.isFinite(value)) return '0';
-  if (value !== 0 && Math.abs(value) < 0.000001) return '<0.000001';
-  return value.toLocaleString(undefined, { maximumFractionDigits: 6 });
-}
-
-function formatTokenBalanceAmount(balance) {
-  const atto = getBalanceAttoCircles(balance);
-  if (atto > 0n) return attoToCirclesString(atto);
-  if (typeof balance?.circles === 'number') return formatNumberAmount(balance.circles);
-  if (typeof balance?.crc === 'number') return formatNumberAmount(balance.crc);
-  return '0';
-}
-
 function getBalanceAttoCircles(balance) {
   if (balance?.attoCircles === undefined || balance?.attoCircles === null) return 0n;
   const amount = BigInt(balance.attoCircles);
@@ -254,6 +248,76 @@ function getBalanceAttoCircles(balance) {
 
 function sumWithdrawableAttoCircles(balances) {
   return balances.reduce((sum, balance) => sum + getBalanceAttoCircles(balance), 0n);
+}
+
+function rankTrustSearchResult(result) {
+  const avatarType = (result?.avatarType || '').toLowerCase();
+  if (avatarType.includes('group') || avatarType.includes('org') || avatarType.includes('organization')) {
+    return 0;
+  }
+  return 1;
+}
+
+function clearTrustSearchResults(message = '') {
+  if (!trustSearchResultsEl) return;
+  trustSearchResultsEl.innerHTML = message
+    ? `<p class="muted">${escapeHtml(message)}</p>`
+    : '';
+}
+
+function resetTrustSearchState(message = '') {
+  trustSearchRequestId += 1;
+  if (trustSearchDebounceTimer) {
+    clearTimeout(trustSearchDebounceTimer);
+    trustSearchDebounceTimer = null;
+  }
+  clearTrustSearchResults(message);
+}
+
+function renderTrustSearchResults(results) {
+  if (!trustSearchResultsEl) return;
+
+  if (!results || results.length === 0) {
+    trustSearchResultsEl.innerHTML = '<p class="muted">No matches found.</p>';
+    return;
+  }
+
+  const sorted = [...results].sort((a, b) => rankTrustSearchResult(a) - rankTrustSearchResult(b));
+  const uniqueByAddress = new Map();
+  sorted.forEach((entry) => {
+    if (!entry?.address || !isAddress(entry.address)) return;
+    const normalizedAddress = getAddress(entry.address);
+    const key = normalizedAddress.toLowerCase();
+    if (!uniqueByAddress.has(key)) {
+      uniqueByAddress.set(key, { ...entry, address: normalizedAddress });
+    }
+  });
+
+  const rows = Array.from(uniqueByAddress.values())
+    .slice(0, 40)
+    .map((entry) => {
+      const name = entry?.name?.trim() || entry?.registeredName?.trim() || 'Unnamed avatar';
+      const avatarType = (entry?.avatarType || '').toLowerCase();
+      const typeLabel = avatarType.includes('group') || avatarType.includes('org')
+        ? 'Group/Org'
+        : 'Human';
+
+      return `
+        <div class="trust-item trust-search-item">
+          <div>
+            <div class="org-name">${escapeHtml(name)}</div>
+            <div class="muted mono">${escapeHtml(entry.address)}</div>
+          </div>
+          <button class="btn-sm trust-select-btn" data-addr="${escapeHtml(entry.address)}">Use ${typeLabel}</button>
+        </div>
+      `;
+    })
+    .join('');
+
+  trustSearchResultsEl.innerHTML = rows || '<p class="muted">No matches found.</p>';
+  trustSearchResultsEl.querySelectorAll('.trust-select-btn').forEach((btn) => {
+    btn.addEventListener('click', () => addTrust(btn.dataset.addr));
+  });
 }
 
 function attoToCirclesString(atto) {
@@ -287,8 +351,7 @@ function updateWithdrawAvailableText() {
 }
 
 function updateWithdrawButtonState() {
-  const rawRecipient = withdrawTargetAddressInput?.value.trim() || '';
-  const recipientValid = isAddress(rawRecipient);
+  const recipientValid = !!connectedAddress && isAddress(connectedAddress);
   const parsedAmount = parseCirclesInputToAtto(withdrawAmountInput?.value || '');
   const hasPositiveAmount = parsedAmount !== null && parsedAmount > 0n;
   const amountWithinBalance =
@@ -311,51 +374,54 @@ function getAdditionalSafeSignerAddresses() {
   );
 }
 
-function renderFundRecipientOptions() {
-  if (!fundRecipientAddressSelect) return;
+function renderFundRecipientActions() {
+  if (!fundRecipientListEl) return;
 
   const recipients = getAdditionalSafeSignerAddresses();
-  const currentValue = fundRecipientAddressSelect.value;
-
   if (recipients.length === 0) {
-    fundRecipientAddressSelect.innerHTML = '<option value="">Add an EOA signer first</option>';
-    fundRecipientAddressSelect.disabled = true;
+    fundRecipientListEl.innerHTML = '<p class="muted">Add an EOA signer first.</p>';
     return;
   }
 
-  const options = recipients
-    .map((address) => `<option value="${address}">${address}</option>`)
+  fundRecipientListEl.innerHTML = recipients
+    .map(
+      (address) => `
+        <div class="trust-item">
+          <span class="mono">${escapeHtml(address)}</span>
+          <button class="btn-sm fund-gas-btn" data-recipient="${escapeHtml(address)}">Fund with gas</button>
+        </div>
+      `
+    )
     .join('');
 
-  fundRecipientAddressSelect.innerHTML = options;
-  fundRecipientAddressSelect.disabled = false;
-
-  const normalizedCurrent = isAddress(currentValue) ? getAddress(currentValue) : null;
-  if (normalizedCurrent && recipients.some((address) => address === normalizedCurrent)) {
-    fundRecipientAddressSelect.value = normalizedCurrent;
-  } else {
-    fundRecipientAddressSelect.value = recipients[0];
-  }
+  fundRecipientListEl.querySelectorAll('.fund-gas-btn').forEach((btn) => {
+    btn.addEventListener('click', () => fundFaucetXdai(btn.dataset.recipient));
+  });
 }
 
 function updateFundFaucetButtonState() {
   const hasAdditionalSigner = hasAdditionalSafeSigner();
-  const recipientAddressRaw = fundRecipientAddressSelect?.value.trim() || '';
-  const recipientAddressValid = isAddress(recipientAddressRaw);
   const amountAttoCircles = parseCirclesInputToAtto(fundAmountXdaiInput?.value || '');
   const amountValid = amountAttoCircles !== null && amountAttoCircles > 0n;
-
-  fundFaucetBtn.disabled = !(
-    hasAdditionalSigner &&
-    recipientAddressValid &&
-    amountValid
-  );
+  const canFund = hasAdditionalSigner && amountValid && !fundingInProgress;
+  fundRecipientListEl?.querySelectorAll('.fund-gas-btn').forEach((button) => {
+    button.disabled = !canFund;
+  });
 
   if (!fundFaucetHintEl) return;
   if (!hasAdditionalSigner) {
-    fundFaucetHintEl.textContent = 'Add at least one EOA signer to choose an xDAI recipient.';
+    fundFaucetHintEl.textContent = 'Add at least one additional EOA signer to enable funding.';
     return;
   }
+  if (!amountValid) {
+    fundFaucetHintEl.textContent = 'Enter a CRC amount, then click "Fund with gas" next to an EOA.';
+    return;
+  }
+  if (fundingInProgress) {
+    fundFaucetHintEl.textContent = 'Funding transaction in progress…';
+    return;
+  }
+  fundFaucetHintEl.textContent = 'Click "Fund with gas" next to the EOA you want to fund.';
 }
 
 function hideAllSections() {
@@ -373,32 +439,36 @@ function showDisconnectedState() {
   safeSignersListEl.innerHTML = '<p class="muted">Connect a wallet to load signers.</p>';
   activeSafeOwners = [];
   cachedWithdrawableAttoCircles = 0n;
-  renderFundRecipientOptions();
+  resetTrustSearchState('Connect a wallet to search.');
+  renderFundRecipientActions();
   updateWithdrawAvailableText();
   updateWithdrawButtonState();
   updateFundFaucetButtonState();
   loginSection.classList.remove('hidden');
 }
 
-function showCreateOrgOptions(orgSafes = []) {
+function showCreateOrgOptions(orgOptions = []) {
   hideAllSections();
   setStatus('Logged in', 'success');
-  renderOwnedOrgOptions(orgSafes);
+  renderOwnedOrgOptions(orgOptions);
   optionsSection.classList.remove('hidden');
 }
 
-function renderOwnedOrgOptions(orgSafes) {
-  if (!orgSafes || orgSafes.length === 0) {
+function renderOwnedOrgOptions(orgOptions) {
+  if (!orgOptions || orgOptions.length === 0) {
     optionsOrgList.innerHTML = '<p class="muted">No organizations yet.</p>';
     return;
   }
 
-  optionsOrgList.innerHTML = orgSafes
+  optionsOrgList.innerHTML = orgOptions
     .map(
-      (orgSafe) => `
+      (org) => `
       <div class="org-item">
-        <a class="org-link mono" href="https://gnosisscan.io/address/${orgSafe}" target="_blank" rel="noopener">${orgSafe}</a>
-        <button class="btn-sm org-open-btn" data-org-safe="${orgSafe}">Open</button>
+        <div>
+          <div class="org-name">${escapeHtml(org.name || truncAddr(org.address))}</div>
+          <a class="org-link mono" href="https://explorer.aboutcircles.com/avatar/${org.address}/" target="_blank" rel="noopener">${escapeHtml(truncAddr(org.address))}</a>
+        </div>
+        <button class="btn-sm org-open-btn" data-org-safe="${org.address}">Open</button>
       </div>
     `
     )
@@ -407,6 +477,24 @@ function renderOwnedOrgOptions(orgSafes) {
   optionsOrgList.querySelectorAll('.org-open-btn').forEach((btn) => {
     btn.addEventListener('click', () => openOwnedOrganization(btn.dataset.orgSafe));
   });
+}
+
+async function enrichOrganizationOptions(orgAddresses, sdkInstance) {
+  if (!orgAddresses || orgAddresses.length === 0) return [];
+
+  const options = await Promise.all(
+    orgAddresses.map(async (address) => {
+      try {
+        const profile = await sdkInstance.rpc.profile.getProfileByAddress(address);
+        const name = profile?.name?.trim();
+        return { address, name: name || null };
+      } catch {
+        return { address, name: null };
+      }
+    })
+  );
+
+  return options.sort((a, b) => (a.name || a.address).localeCompare(b.name || b.address));
 }
 
 function toHexValue(value) {
@@ -845,7 +933,7 @@ async function registerOrganization() {
       const links = lastTxHashes.length ? `<br>${txLinks(lastTxHashes)}` : '';
       showResult(
         'success',
-        `Organization registered via dedicated Safe: <a href="https://gnosisscan.io/address/${predictedOrgSafe}" target="_blank" rel="noopener">${predictedOrgSafe}</a><br><span class="muted">Receipt polling timed out, but on-chain state confirms registration.</span>${links}`
+        `Organization registered via dedicated Safe: <a href="https://explorer.aboutcircles.com/avatar/${predictedOrgSafe}/" target="_blank" rel="noopener">${predictedOrgSafe}</a><br><span class="muted">Receipt polling timed out, but on-chain state confirms registration.</span>${links}`
       );
 
       await loadAvatarState(true);
@@ -880,7 +968,7 @@ async function registerOrganization() {
     const links = lastTxHashes.length ? `<br>${txLinks(lastTxHashes)}` : '';
     showResult(
       'success',
-      `Organization registered via dedicated Safe: <a href="https://gnosisscan.io/address/${resolvedOrgSafe}" target="_blank" rel="noopener">${resolvedOrgSafe}</a>${links}`
+      `Organization registered via dedicated Safe: <a href="https://explorer.aboutcircles.com/avatar/${resolvedOrgSafe}/" target="_blank" rel="noopener">${resolvedOrgSafe}</a>${links}`
     );
 
     await loadAvatarState(true);
@@ -904,7 +992,7 @@ async function loadSafeSigners() {
   if (!activeOrgAddress) {
     activeSafeOwners = [];
     safeSignersListEl.innerHTML = '<p class="muted">No organization selected.</p>';
-    renderFundRecipientOptions();
+    renderFundRecipientActions();
     updateFundFaucetButtonState();
     return;
   }
@@ -913,7 +1001,7 @@ async function loadSafeSigners() {
   if (!safeAbi) {
     activeSafeOwners = [];
     safeSignersListEl.innerHTML = '<p class="muted">Safe ABI unavailable.</p>';
-    renderFundRecipientOptions();
+    renderFundRecipientActions();
     updateFundFaucetButtonState();
     return;
   }
@@ -926,32 +1014,27 @@ async function loadSafeSigners() {
       abi: safeAbi,
       functionName: 'getOwners',
     });
-    const threshold = await publicClient.readContract({
-      address: getAddress(activeOrgAddress),
-      abi: safeAbi,
-      functionName: 'getThreshold',
-    });
-
     if (!owners || owners.length === 0) {
       activeSafeOwners = [];
       safeSignersListEl.innerHTML = '<p class="muted">No signers found.</p>';
-      renderFundRecipientOptions();
+      renderFundRecipientActions();
       updateFundFaucetButtonState();
       return;
     }
 
     activeSafeOwners = owners.map((owner) => getAddress(owner));
-    const thresholdValue = BigInt(threshold).toString();
+    const connectedLower = connectedAddress ? connectedAddress.toLowerCase() : null;
+    const externalOwners = activeSafeOwners.filter(
+      (owner) => !connectedLower || owner.toLowerCase() !== connectedLower
+    );
     const canRemoveOwner = activeSafeOwners.length > 1;
-    const rows = activeSafeOwners
+    const rows = externalOwners
       .map((owner) => {
-        const isConnected = connectedAddress && owner.toLowerCase() === connectedAddress.toLowerCase();
-        const removeDisabledAttr = canRemoveOwner && !isConnected ? '' : 'disabled';
+        const removeDisabledAttr = canRemoveOwner ? '' : 'disabled';
         return `
           <div class="trust-item">
             <span class="mono">${owner}</span>
             <div class="signer-actions">
-              <span class="muted">${isConnected ? 'Connected' : 'Signer'}</span>
               <button class="btn-sm btn-danger remove-signer-btn" data-owner="${owner}" ${removeDisabledAttr}>Remove</button>
             </div>
           </div>
@@ -959,16 +1042,18 @@ async function loadSafeSigners() {
       })
       .join('');
 
-    safeSignersListEl.innerHTML = `<p class="muted">Threshold: ${thresholdValue}</p>${rows}`;
+    safeSignersListEl.innerHTML = externalOwners.length > 0
+      ? rows
+      : '<p class="muted">No external signers added yet.</p>';
     safeSignersListEl.querySelectorAll('.remove-signer-btn').forEach((btn) => {
       btn.addEventListener('click', () => removeSafeSigner(btn.dataset.owner));
     });
-    renderFundRecipientOptions();
+    renderFundRecipientActions();
     updateFundFaucetButtonState();
   } catch (err) {
     activeSafeOwners = [];
     safeSignersListEl.innerHTML = `<p class="muted">Could not load signers: ${decodeError(err)}</p>`;
-    renderFundRecipientOptions();
+    renderFundRecipientActions();
     updateFundFaucetButtonState();
   }
 }
@@ -1133,8 +1218,7 @@ async function removeSafeSigner(rawOwnerAddress) {
   }
 }
 
-async function fundFaucetXdai() {
-  const rawRecipientAddress = fundRecipientAddressSelect?.value.trim() || '';
+async function fundFaucetXdai(rawRecipientAddress) {
   if (!isAddress(rawRecipientAddress)) {
     showResult('error', 'Choose a valid recipient EOA address.');
     return;
@@ -1163,7 +1247,8 @@ async function fundFaucetXdai() {
   const groupTokenId = BigInt(groupTokenAddress);
   const payoutDataHex = encodeAbiParameters([{ type: 'address' }], [recipientAddress]);
 
-  fundFaucetBtn.disabled = true;
+  fundingInProgress = true;
+  updateFundFaucetButtonState();
   showResult('pending', 'Preparing group CRC for faucet transfer…');
 
   try {
@@ -1286,16 +1371,90 @@ async function fundFaucetXdai() {
   } catch (err) {
     showResult('error', `CRC-to-xDAI funding failed: ${decodeError(err)}`);
   } finally {
+    fundingInProgress = false;
     updateFundFaucetButtonState();
   }
 }
 
 /* ── Trust Management ────────────────────────────────────────────── */
 
-async function addTrust() {
-  const raw = trustAddrInput.value.trim();
-  if (!isAddress(raw)) {
-    showResult('error', 'Enter a valid address.');
+async function resolveTrustAddress(rawInput) {
+  const query = rawInput.trim();
+  if (!query) {
+    throw new Error('Enter an address, username, or group name.');
+  }
+  if (isAddress(query)) {
+    return getAddress(query);
+  }
+  if (!humanSdk) {
+    throw new Error('Connected account is not ready.');
+  }
+
+  const results = await humanSdk.rpc.profile.searchByAddressOrName(query, 40, 0);
+  renderTrustSearchResults(results);
+
+  const normalizedQuery = query.toLowerCase();
+  const exactByName = results.find((entry) => {
+    const name = (entry?.name || '').trim().toLowerCase();
+    const registeredName = (entry?.registeredName || '').trim().toLowerCase();
+    return name === normalizedQuery || registeredName === normalizedQuery;
+  });
+  if (exactByName?.address && isAddress(exactByName.address)) {
+    return getAddress(exactByName.address);
+  }
+
+  const orgOrGroupResults = results.filter((entry) => {
+    const avatarType = (entry?.avatarType || '').toLowerCase();
+    return avatarType.includes('group') || avatarType.includes('org') || avatarType.includes('organization');
+  });
+  const scopedResults = orgOrGroupResults.length > 0 ? orgOrGroupResults : results;
+  const firstMatch = scopedResults.find((entry) => entry?.address && isAddress(entry.address));
+  if (!firstMatch) {
+    throw new Error('No matching username/group found.');
+  }
+  return getAddress(firstMatch.address);
+}
+
+async function updateTrustSearchOptions() {
+  const query = trustAddrInput.value.trim();
+  if (trustSearchDebounceTimer) {
+    clearTimeout(trustSearchDebounceTimer);
+    trustSearchDebounceTimer = null;
+  }
+
+  if (!query || query.length < 2) {
+    clearTrustSearchResults();
+    return;
+  }
+
+  if (isAddress(query)) {
+    clearTrustSearchResults('Address detected. Click "Allow CRC" to add directly.');
+    return;
+  }
+
+  const requestId = ++trustSearchRequestId;
+  if (trustSearchResultsEl) trustSearchResultsEl.innerHTML = '<p class="muted">Searching…</p>';
+  trustSearchDebounceTimer = setTimeout(async () => {
+    try {
+      if (!humanSdk) return;
+      const results = await humanSdk.rpc.profile.searchByAddressOrName(query, 40, 0);
+      if (requestId !== trustSearchRequestId) return;
+      renderTrustSearchResults(results);
+    } catch {
+      if (requestId !== trustSearchRequestId) return;
+      clearTrustSearchResults('Search failed. Try again.');
+    } finally {
+      if (requestId === trustSearchRequestId) trustSearchDebounceTimer = null;
+    }
+  }, 200);
+}
+
+async function addTrust(preselectedAddress = null) {
+  let addr;
+  try {
+    addr = preselectedAddress ? getAddress(preselectedAddress) : await resolveTrustAddress(trustAddrInput.value);
+  } catch (err) {
+    showResult('error', decodeError(err));
     return;
   }
 
@@ -1303,8 +1462,6 @@ async function addTrust() {
     showResult('error', 'Organization wallet is not ready.');
     return;
   }
-
-  const addr = getAddress(raw);
 
   addTrustBtn.disabled = true;
   showResult('pending', 'Requesting approval…');
@@ -1316,6 +1473,7 @@ async function addTrust() {
     const links = lastTxHashes.length ? `<br>${txLinks(lastTxHashes)}` : '';
     showResult('success', `Now trusting ${truncAddr(addr)}.${links}`);
     trustAddrInput.value = '';
+    resetTrustSearchState();
     await loadTrustRelations();
   } catch (err) {
     showResult('error', `Trust failed: ${decodeError(err)}`);
@@ -1349,9 +1507,8 @@ function fillWithdrawMax() {
 }
 
 async function withdrawBalance() {
-  const rawRecipient = withdrawTargetAddressInput.value.trim();
-  if (!isAddress(rawRecipient)) {
-    showResult('error', 'Enter a valid recipient address.');
+  if (!connectedAddress || !isAddress(connectedAddress)) {
+    showResult('error', 'Connect a valid recipient account first.');
     return;
   }
 
@@ -1383,7 +1540,7 @@ async function withdrawBalance() {
     return;
   }
 
-  const recipient = getAddress(rawRecipient);
+  const recipient = getAddress(connectedAddress);
   withdrawBalanceBtn.disabled = true;
   showResult('pending', 'Requesting approval…');
 
@@ -1394,13 +1551,13 @@ async function withdrawBalance() {
     const links = lastTxHashes.length ? `<br>${txLinks(lastTxHashes)}` : '';
     showResult(
       'success',
-      `Withdrew ${attoToCirclesString(parsedAmount)} CRC to ${recipient}.${links}`
+      `Sent ${attoToCirclesString(parsedAmount)} CRC to your account ${recipient}.${links}`
     );
 
     withdrawAmountInput.value = '';
     await loadBalances();
   } catch (err) {
-    showResult('error', `Withdraw failed: ${decodeError(err)}`);
+    showResult('error', `Send funds failed: ${decodeError(err)}`);
   } finally {
     updateWithdrawButtonState();
   }
@@ -1424,14 +1581,36 @@ async function loadTrustRelations() {
       return;
     }
 
+    const normalizedTrustAddrs = relations
+      .map((r) => r.objectAvatar || r.trustee || r.address || (typeof r === 'string' ? r : ''))
+      .filter((addr) => typeof addr === 'string' && isAddress(addr))
+      .map((addr) => getAddress(addr));
+
+    const uniqueTrustAddrs = [...new Set(normalizedTrustAddrs)];
+    const trustNameByAddr = new Map();
+    await Promise.all(
+      uniqueTrustAddrs.map(async (addr) => {
+        try {
+          const profile = await orgSdk.rpc.profile.getProfileByAddress(addr);
+          const name = profile?.name?.trim() || profile?.registeredName?.trim() || null;
+          if (name) trustNameByAddr.set(addr.toLowerCase(), name);
+        } catch {
+          // Ignore profile lookup failures and fall back to address.
+        }
+      })
+    );
+
     trustListEl.innerHTML = relations
       .map((r) => {
         const addr =
           r.objectAvatar || r.trustee || r.address || (typeof r === 'string' ? r : '');
+        if (!isAddress(addr)) return '';
+        const normalizedAddr = getAddress(addr);
+        const displayLabel = trustNameByAddr.get(normalizedAddr.toLowerCase()) || normalizedAddr;
         return `
           <div class="trust-item">
-            <a class="trust-addr" href="https://gnosisscan.io/address/${addr}" target="_blank" title="${addr}">${truncAddr(addr)}</a>
-            <button class="btn-sm btn-danger" data-addr="${addr}">Untrust</button>
+            <a class="trust-addr" href="https://explorer.aboutcircles.com/avatar/${normalizedAddr}/" target="_blank" title="${escapeHtml(normalizedAddr)}">${escapeHtml(displayLabel)}</a>
+            <button class="btn-sm btn-danger" data-addr="${escapeHtml(normalizedAddr)}">Untrust</button>
           </div>`;
       })
       .join('');
@@ -1445,45 +1624,23 @@ async function loadTrustRelations() {
 }
 
 async function loadBalances() {
-  if (balancesEl) balancesEl.innerHTML = '<p class="muted">Loading…</p>';
-
   if (!avatar) {
-    cachedOrgBalances = [];
     cachedWithdrawableAttoCircles = 0n;
     updateWithdrawAvailableText();
     updateWithdrawButtonState();
-    if (balancesEl) balancesEl.innerHTML = '<p class="muted">No organization selected.</p>';
     return;
   }
 
   try {
     const balances = await avatar.balances.getTokenBalances();
-    cachedOrgBalances = balances;
     cachedWithdrawableAttoCircles = sumWithdrawableAttoCircles(balances);
     updateWithdrawAvailableText();
     updateWithdrawButtonState();
-
-    if (!balances || balances.length === 0) {
-      if (balancesEl) balancesEl.innerHTML = '<p class="muted">No token balances.</p>';
-      return;
-    }
-
-    if (balancesEl) {
-      balancesEl.innerHTML = balances
-        .map((b) => {
-          const label =
-            b.symbol || b.tokenSymbol || truncAddr(b.tokenAddress || b.token || '');
-          const amount = formatTokenBalanceAmount(b);
-          return `<div class="balance-item"><span>${label}</span><span>${amount} CRC</span></div>`;
-        })
-        .join('');
-    }
   } catch (err) {
-    cachedOrgBalances = [];
     cachedWithdrawableAttoCircles = 0n;
     updateWithdrawAvailableText();
     updateWithdrawButtonState();
-    if (balancesEl) balancesEl.innerHTML = `<p class="muted">Error: ${decodeError(err)}</p>`;
+    showResult('error', `Could not load balances: ${decodeError(err)}`);
   }
 }
 
@@ -1544,9 +1701,10 @@ async function loadAvatarState(preserveResult = false) {
   orgSdk = null;
   activeOrgAddress = null;
   activeSafeOwners = [];
-  cachedOrgBalances = [];
   cachedWithdrawableAttoCircles = 0n;
-  renderFundRecipientOptions();
+  trustAddrInput.value = '';
+  resetTrustSearchState();
+  renderFundRecipientActions();
   updateWithdrawAvailableText();
   updateFundFaucetButtonState();
 
@@ -1573,10 +1731,12 @@ async function loadAvatarState(preserveResult = false) {
     }
 
     setSessionOrgSafes(connectedAddress, validOwnedOrgSafes);
-    showCreateOrgOptions(validOwnedOrgSafes);
+    const orgOptions = await enrichOrganizationOptions(validOwnedOrgSafes, humanSdk);
+    showCreateOrgOptions(orgOptions);
   } catch {
     const fallbackSafes = connectedAddress ? getSessionOrgSafes(connectedAddress) : [];
-    showCreateOrgOptions(fallbackSafes);
+    const fallbackOptions = fallbackSafes.map((address) => ({ address, name: null }));
+    showCreateOrgOptions(fallbackOptions);
   }
 }
 
@@ -1595,9 +1755,9 @@ onWalletChange(async (address) => {
   activeOrgAddress = null;
   activeSafeOwners = [];
   lastTxHashes = [];
-  cachedOrgBalances = [];
   cachedWithdrawableAttoCircles = 0n;
-  renderFundRecipientOptions();
+  resetTrustSearchState('Connect a wallet to search.');
+  renderFundRecipientActions();
   updateWithdrawAvailableText();
   updateFundFaucetButtonState();
 
@@ -1653,13 +1813,11 @@ if (typeof window !== 'undefined') {
 registerBtn.addEventListener('click', registerOrganization);
 addTrustBtn.addEventListener('click', addTrust);
 addSafeSignerBtn.addEventListener('click', addSafeSigner);
-fundFaucetBtn.addEventListener('click', fundFaucetXdai);
 withdrawMaxBtn.addEventListener('click', fillWithdrawMax);
 withdrawBalanceBtn.addEventListener('click', withdrawBalance);
-withdrawTargetAddressInput.addEventListener('input', updateWithdrawButtonState);
 withdrawAmountInput.addEventListener('input', updateWithdrawButtonState);
 fundAmountXdaiInput.addEventListener('input', updateFundFaucetButtonState);
-fundRecipientAddressSelect.addEventListener('change', updateFundFaucetButtonState);
+trustAddrInput.addEventListener('input', updateTrustSearchOptions);
 startCreateOrgBtn.addEventListener('click', () => {
   optionsSection.classList.add('hidden');
   registerSection.classList.remove('hidden');

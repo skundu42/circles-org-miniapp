@@ -140,43 +140,6 @@ h2:first-child {
   border-top: 1px solid var(--line-soft);
 }
 
-.collapsible {
-  border-top: 1px solid var(--line-soft);
-  margin-top: 18px;
-  padding-top: 10px;
-}
-
-.collapsible summary {
-  cursor: pointer;
-  list-style: none;
-  color: var(--muted);
-  font-size: 15px;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.collapsible summary::-webkit-details-marker {
-  display: none;
-}
-
-.collapsible summary::after {
-  content: "+";
-  font-size: 18px;
-  font-weight: 600;
-  line-height: 1;
-}
-
-.collapsible[open] summary::after {
-  content: "-";
-}
-
-.collapsible-body {
-  margin-top: 8px;
-}
-
 /* ── Form elements ──────────────────────────────────────────────── */
 
 .field {
@@ -348,6 +311,7 @@ button:disabled {
   font-size: 13px;
   color: var(--accent);
   text-decoration: none;
+  word-break: break-all;
 }
 
 .trust-addr:hover {
@@ -370,7 +334,7 @@ button:disabled {
 
 .org-item {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 10px;
   padding: 8px 0;
@@ -389,38 +353,42 @@ button:disabled {
   word-break: break-all;
 }
 
+.org-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
 .org-link:hover {
   text-decoration: underline;
-}
-
-/* ── Balance list ───────────────────────────────────────────────── */
-
-.balance-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 8px 0;
-  border-bottom: 1px solid var(--line-soft);
-  font-size: 14px;
-}
-
-.balance-item:last-child {
-  border-bottom: none;
-}
-
-.balance-total {
-  font-weight: 600;
-  font-size: 15px;
-  padding: 8px 0;
-  border-bottom: 1px solid var(--line);
-  margin-bottom: 4px;
 }
 
 .muted {
   color: var(--muted);
   font-size: 13px;
   margin: 6px 0;
+}
+
+#trust-search-results {
+  margin-top: 8px;
+  max-height: 240px;
+  overflow-y: auto;
+  border: 1px solid var(--line-soft);
+  border-radius: 10px;
+  padding: 0 10px;
+  background: #fcfdff;
+}
+
+.trust-search-item {
+  align-items: flex-start;
+}
+
+.trust-search-item .btn-sm {
+  margin-top: 6px;
+}
+
+#fund-recipient-list {
+  margin-top: 8px;
 }
 
 /* ── Result messages ────────────────────────────────────────────── */

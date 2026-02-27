@@ -24,10 +24,10 @@
       <!-- ── Options Section ───────────────────────────────────── -->
       <div id="options-section" class="section hidden">
         <p class="section-desc">
-          Select an organization account or create a new one.
+          Build-focused setup for shop/game miniapps.
         </p>
         <p class="section-desc">
-          Use this app to create/manage org accounts for the miniapps you build.
+          Pick an org account or create one, then follow the step-by-step flow.
         </p>
         <div class="subsection">
           <h2>Your Organizations</h2>
@@ -76,12 +76,49 @@
         <button id="back-to-options-btn" class="btn-secondary">Switch Organization</button>
 
         <div class="subsection">
-          <h2>Withdraw Balance</h2>
-          <p id="withdraw-available" class="muted">Available: 0 CRC</p>
+          <h2>Step 1: Which CRC Can Users Pay With To Use your App?</h2>
           <div class="field">
-            <label for="withdraw-target-address">Recipient Address</label>
-            <input type="text" id="withdraw-target-address" placeholder="0x…" autocomplete="off" />
+            <div class="input-row">
+              <input type="text" id="trust-address" placeholder="Search name/group or paste 0x…" autocomplete="off" />
+              <button id="add-trust-btn">Allow CRC</button>
+            </div>
           </div>
+          <div id="trust-search-results">
+          </div>
+          <div id="trust-list">
+            <p class="muted">Connect a wallet to view trust relations.</p>
+          </div>
+        </div>
+
+        <div class="subsection">
+          <h2>Step 2: Add An External Account As A Signer</h2>
+          <div class="field">
+            <label for="safe-signer-address">Use this EOA in your backend for automatic payouts from your Org</label>
+            <div class="input-row">
+              <input type="text" id="safe-signer-address" placeholder="0x…" autocomplete="off" />
+              <button id="add-safe-signer-btn">Add signer</button>
+            </div>
+          </div>
+          <div id="safe-signers-list">
+            <p class="muted">Connect a wallet to load signers.</p>
+          </div>
+        </div>
+
+        <div class="subsection">
+          <h2>Step 3: Fund Added EOA With Gas</h2>
+          <p id="fund-faucet-hint" class="muted">Add at least one EOA signer to enable funding.</p>
+          <div class="field">
+            <label for="fund-amount-xdai">Amount (CRC)</label>
+            <input type="text" id="fund-amount-xdai" placeholder="0.0" autocomplete="off" />
+          </div>
+          <div id="fund-recipient-list">
+            <p class="muted">Add an EOA signer first.</p>
+          </div>
+        </div>
+
+        <div class="subsection">
+          <h2>Step 4: Withdraw Collected CRC</h2>
+          <p id="withdraw-available" class="muted">Available: 0 CRC</p>
           <div class="field">
             <label for="withdraw-amount-circles">Amount (CRC)</label>
             <div class="input-row">
@@ -89,58 +126,8 @@
               <button id="withdraw-max-btn" class="btn-secondary">Max</button>
             </div>
           </div>
-          <button id="withdraw-balance-btn" disabled>Withdraw</button>
+          <button id="withdraw-balance-btn" disabled>Send funds to me</button>
         </div>
-
-        <details class="subsection collapsible">
-          <summary>Org Trust Management</summary>
-          <div class="collapsible-body">
-            <div class="field">
-              <label for="trust-address">Add Trusted Address</label>
-              <div class="input-row">
-                <input type="text" id="trust-address" placeholder="0x…" autocomplete="off" />
-                <button id="add-trust-btn">Trust</button>
-              </div>
-            </div>
-            <div id="trust-list">
-              <p class="muted">Connect a wallet to view trust relations.</p>
-            </div>
-          </div>
-        </details>
-
-        <details class="subsection collapsible">
-          <summary>Org Signer Management</summary>
-          <div class="collapsible-body">
-            <div class="field">
-              <label for="safe-signer-address">Add EOA Signer</label>
-              <div class="input-row">
-                <input type="text" id="safe-signer-address" placeholder="0x…" autocomplete="off" />
-                <button id="add-safe-signer-btn">Add Signer</button>
-              </div>
-            </div>
-            <div id="safe-signers-list">
-              <p class="muted">Connect a wallet to load signers.</p>
-            </div>
-          </div>
-        </details>
-
-        <details class="subsection collapsible">
-          <summary>EOA Funding Management</summary>
-          <div class="collapsible-body">
-            <p id="fund-faucet-hint" class="muted">Add at least one additional EOA signer to enable funding.</p>
-            <div class="field">
-              <label for="fund-recipient-address">Recipient EOA (xDAI)</label>
-              <select id="fund-recipient-address" disabled>
-                <option value="">Add an EOA signer first</option>
-              </select>
-            </div>
-            <div class="field">
-              <label for="fund-amount-xdai">Amount (CRC)</label>
-              <input type="text" id="fund-amount-xdai" placeholder="0.0" autocomplete="off" />
-            </div>
-            <button id="fund-faucet-btn" disabled>Fund your org EOA</button>
-          </div>
-        </details>
       </div>
 
       <!-- ── Result Messages ───────────────────────────────────── -->
