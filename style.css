@@ -1,0 +1,445 @@
+:root {
+  --bg-a: #f3f7ff;
+  --bg-b: #fcf8f3;
+  --ink: #1a2340;
+  --muted: #6e7694;
+  --card: #ffffff;
+  --line: #d8deef;
+  --line-soft: #e6eaf6;
+  --accent: #0f4ad7;
+  --accent-soft: #e7efff;
+  --success-bg: #effdf2;
+  --success-line: #b7efc2;
+  --success-ink: #157a2f;
+  --warn-bg: #fff9ea;
+  --warn-line: #f8e4b3;
+  --warn-ink: #975a16;
+  --error-bg: #fff1f1;
+  --error-line: #ffcaca;
+  --error-ink: #b42318;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "Space Grotesk", "Avenir Next", "Segoe UI", sans-serif;
+  color: var(--ink);
+  background:
+    radial-gradient(1200px 500px at 0% 0%, #e7f0ff 0%, transparent 65%),
+    radial-gradient(900px 500px at 100% 20%, #fff0dc 0%, transparent 70%),
+    linear-gradient(145deg, var(--bg-a), var(--bg-b));
+  min-height: 100vh;
+  padding: 24px 14px 48px;
+}
+
+.app-shell {
+  max-width: 720px;
+  margin: 0 auto;
+}
+
+.card {
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(6px);
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  padding: 22px;
+  box-shadow:
+    0 8px 30px rgba(26, 35, 64, 0.08),
+    inset 0 1px 0 #ffffff;
+}
+
+h1 {
+  margin: 0;
+  letter-spacing: -0.02em;
+  font-size: 30px;
+  line-height: 1.1;
+}
+
+.title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+/* ── Badge ──────────────────────────────────────────────────────── */
+
+.badge {
+  border-radius: 999px;
+  border: 1px solid;
+  padding: 5px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.badge-disconnected {
+  background: var(--warn-bg);
+  border-color: var(--warn-line);
+  color: var(--warn-ink);
+}
+
+.badge-pending {
+  background: var(--warn-bg);
+  border-color: var(--warn-line);
+  color: var(--warn-ink);
+}
+
+.badge-success {
+  background: var(--success-bg);
+  border-color: var(--success-line);
+  color: var(--success-ink);
+}
+
+.badge-warning {
+  background: var(--warn-bg);
+  border-color: var(--warn-line);
+  color: var(--warn-ink);
+}
+
+.badge-error {
+  background: var(--error-bg);
+  border-color: var(--error-line);
+  color: var(--error-ink);
+}
+
+/* ── Sections ───────────────────────────────────────────────────── */
+
+.section {
+  margin-top: 6px;
+}
+
+.hidden {
+  display: none !important;
+}
+
+.section-desc {
+  color: var(--muted);
+  font-size: 14px;
+  margin: 8px 0 14px;
+}
+
+h2 {
+  margin: 22px 0 10px;
+  font-size: 15px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+h2:first-child {
+  margin-top: 0;
+}
+
+.subsection {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line-soft);
+}
+
+/* ── Form elements ──────────────────────────────────────────────── */
+
+.field {
+  margin-top: 10px;
+}
+
+.field label {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.optional {
+  text-transform: none;
+  letter-spacing: normal;
+  font-weight: 400;
+}
+
+.field input,
+.field select,
+.field textarea {
+  width: 100%;
+  border-radius: 11px;
+  border: 1px solid var(--line-soft);
+  background: #ffffff;
+  color: var(--ink);
+  padding: 11px 12px;
+  font-size: 14px;
+  font-family: "JetBrains Mono", "SF Mono", "Menlo", monospace;
+}
+
+.field textarea {
+  resize: vertical;
+  font-family: "Space Grotesk", "Avenir Next", "Segoe UI", sans-serif;
+}
+
+.field input:focus,
+.field select:focus,
+.field textarea:focus {
+  outline: none;
+  border-color: #8ba7ef;
+  box-shadow: 0 0 0 4px rgba(15, 74, 215, 0.12);
+}
+
+.input-row {
+  display: flex;
+  gap: 8px;
+}
+
+.input-row input {
+  flex: 1;
+  min-width: 0;
+}
+
+.input-row button {
+  flex-shrink: 0;
+  width: auto;
+  margin-top: 0;
+  padding: 11px 20px;
+}
+
+button {
+  width: 100%;
+  border: 0;
+  border-radius: 999px;
+  margin-top: 10px;
+  padding: 12px 16px;
+  background: linear-gradient(130deg, var(--accent), #1f6bff);
+  color: #ffffff;
+  font-weight: 600;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+  filter: brightness(1.05);
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-secondary {
+  margin-top: 8px;
+  background: #ffffff;
+  border: 1px solid var(--line);
+  color: var(--ink);
+}
+
+.btn-secondary:hover:not(:disabled) {
+  background: #f7f9ff;
+  filter: none;
+}
+
+/* ── Info box ───────────────────────────────────────────────────── */
+
+.info-box {
+  border-radius: 12px;
+  border: 1px solid var(--line-soft);
+  background: #fafbff;
+  padding: 14px 16px;
+  margin-top: 14px;
+}
+
+.info-box.info-warning {
+  background: var(--warn-bg);
+  border-color: var(--warn-line);
+  color: var(--warn-ink);
+}
+
+.info-box.info-warning p {
+  margin: 0;
+  font-size: 14px;
+}
+
+.info-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 0;
+}
+
+.info-row + .info-row {
+  border-top: 1px solid var(--line-soft);
+}
+
+.info-label {
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  flex-shrink: 0;
+}
+
+.mono {
+  font-family: "JetBrains Mono", "SF Mono", "Menlo", monospace;
+  font-size: 12px;
+  word-break: break-all;
+}
+
+/* ── Trust list ─────────────────────────────────────────────────── */
+
+.trust-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.trust-item:last-child {
+  border-bottom: none;
+}
+
+.trust-addr {
+  font-family: "JetBrains Mono", "SF Mono", "Menlo", monospace;
+  font-size: 13px;
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.trust-addr:hover {
+  text-decoration: underline;
+}
+
+.btn-sm {
+  width: auto;
+  margin: 0;
+  padding: 5px 12px;
+  font-size: 12px;
+  border-radius: 999px;
+}
+
+.btn-danger {
+  background: linear-gradient(130deg, #c53030, #e53e3e);
+}
+
+/* ── Org options ────────────────────────────────────────────────── */
+
+.org-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.org-item:last-child {
+  border-bottom: none;
+}
+
+.org-link {
+  font-family: "JetBrains Mono", "SF Mono", "Menlo", monospace;
+  font-size: 13px;
+  color: var(--accent);
+  text-decoration: none;
+  word-break: break-all;
+}
+
+.org-link:hover {
+  text-decoration: underline;
+}
+
+/* ── Balance list ───────────────────────────────────────────────── */
+
+.balance-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line-soft);
+  font-size: 14px;
+}
+
+.balance-item:last-child {
+  border-bottom: none;
+}
+
+.balance-total {
+  font-weight: 600;
+  font-size: 15px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 4px;
+}
+
+.muted {
+  color: var(--muted);
+  font-size: 13px;
+  margin: 6px 0;
+}
+
+/* ── Result messages ────────────────────────────────────────────── */
+
+.result {
+  margin-top: 12px;
+  border: 1px solid;
+  border-radius: 12px;
+  padding: 12px;
+  font-size: 13px;
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.result-success {
+  background: var(--success-bg);
+  border-color: var(--success-line);
+  color: var(--success-ink);
+}
+
+.result-pending {
+  background: var(--warn-bg);
+  border-color: var(--warn-line);
+  color: var(--warn-ink);
+}
+
+.result-error {
+  background: var(--error-bg);
+  border-color: var(--error-line);
+  color: var(--error-ink);
+}
+
+.result a {
+  color: currentColor;
+}
+
+/* ── Responsive ─────────────────────────────────────────────────── */
+
+@media (max-width: 560px) {
+  body {
+    padding: 14px 10px 24px;
+  }
+
+  .card {
+    border-radius: 16px;
+    padding: 16px;
+  }
+
+  h1 {
+    font-size: 24px;
+  }
+
+  .title-row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .input-row {
+    flex-direction: column;
+  }
+
+  .input-row button {
+    width: 100%;
+  }
+}

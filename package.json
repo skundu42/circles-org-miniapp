@@ -1,0 +1,21 @@
+{
+  "name": "circles-org-manager",
+  "version": "0.0.1",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --port 5183",
+    "build": "vite build",
+    "preview": "vite preview --port 5183"
+  },
+  "dependencies": {
+    "@aboutcircles/miniapp-sdk": "^0.1.23",
+    "@aboutcircles/sdk": "*",
+    "@aboutcircles/sdk-utils": "^0.1.23",
+    "@safe-global/safe-deployments": "^1.37.51",
+    "viem": "^2.46.3"
+  },
+  "devDependencies": {
+    "vite": "^6.4.1",
+    "vite-plugin-node-polyfills": "^0.25.0"
+  }
+}
