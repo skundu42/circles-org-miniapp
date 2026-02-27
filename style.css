@@ -140,6 +140,43 @@ h2:first-child {
   border-top: 1px solid var(--line-soft);
 }
 
+.collapsible {
+  border-top: 1px solid var(--line-soft);
+  margin-top: 18px;
+  padding-top: 10px;
+}
+
+.collapsible summary {
+  cursor: pointer;
+  list-style: none;
+  color: var(--muted);
+  font-size: 15px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.collapsible summary::-webkit-details-marker {
+  display: none;
+}
+
+.collapsible summary::after {
+  content: "+";
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.collapsible[open] summary::after {
+  content: "-";
+}
+
+.collapsible-body {
+  margin-top: 8px;
+}
+
 /* ── Form elements ──────────────────────────────────────────────── */
 
 .field {
@@ -298,6 +335,12 @@ button:disabled {
 
 .trust-item:last-child {
   border-bottom: none;
+}
+
+.signer-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .trust-addr {

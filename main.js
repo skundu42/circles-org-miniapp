@@ -32,6 +32,7 @@ const RPC_FALLBACK_URLS = [
 ];
 const SAFE_VERSION = '1.4.1';
 const OWNER_ORG_SAFE_MAP_KEY = 'circles-org-safe-by-owner-v1';
+const SAFE_SENTINEL_OWNERS = '0x0000000000000000000000000000000000000001';
 const TX_RECEIPT_TIMEOUT_MS = 12 * 60 * 1000;
 const TX_RECEIPT_POLL_MS = 3000;
 const ATTO_CIRCLES_DECIMALS = 18n;
@@ -161,6 +162,7 @@ const backToOptionsBtn = document.getElementById('back-to-options-btn');
 
 const orgNameDisplay = document.getElementById('org-name-display');
 const orgAddrDisplay = document.getElementById('org-address-display');
+const orgBalanceDisplay = document.getElementById('org-balance-display');
 const trustAddrInput = document.getElementById('trust-address');
 const addTrustBtn = document.getElementById('add-trust-btn');
 const trustListEl = document.getElementById('trust-list');
@@ -278,12 +280,20 @@ function estimateFaucetXdaiPayout(amountAttoCircles, alreadyClaimedWei) {
 
 function updateWithdrawAvailableText() {
   if (!withdrawAvailableEl) return;
-  withdrawAvailableEl.textContent = `Available: ${attoToCirclesString(cachedWithdrawableAttoCircles)} CRC`;
+  const balanceText = `${attoToCirclesString(cachedWithdrawableAttoCircles)} CRC`;
+  withdrawAvailableEl.textContent = `Available: ${balanceText}`;
+  if (orgBalanceDisplay) orgBalanceDisplay.textContent = balanceText;
 }
 
 function updateWithdrawButtonState() {
-  const hasRecipientAddress = Boolean(withdrawTargetAddressInput?.value.trim());
-  withdrawBalanceBtn.disabled = !hasRecipientAddress;
+  const rawRecipient = withdrawTargetAddressInput?.value.trim() || '';
+  const recipientValid = isAddress(rawRecipient);
+  const parsedAmount = parseCirclesInputToAtto(withdrawAmountInput?.value || '');
+  const hasPositiveAmount = parsedAmount !== null && parsedAmount > 0n;
+  const amountWithinBalance =
+    parsedAmount !== null && parsedAmount > 0n && parsedAmount <= cachedWithdrawableAttoCircles;
+  const hasBalance = cachedWithdrawableAttoCircles > 0n;
+  withdrawBalanceBtn.disabled = !(recipientValid && hasPositiveAmount && amountWithinBalance && hasBalance);
 }
 
 function hasAdditionalSafeSigner() {
@@ -342,10 +352,9 @@ function updateFundFaucetButtonState() {
 
   if (!fundFaucetHintEl) return;
   if (!hasAdditionalSigner) {
-    fundFaucetHintEl.textContent = 'Add at least one additional EOA signer to choose an xDAI recipient.';
+    fundFaucetHintEl.textContent = 'Add at least one EOA signer to choose an xDAI recipient.';
     return;
   }
-  fundFaucetHintEl.textContent = 'Mints required group CRC and sends it to the faucet, paying xDAI to the selected EOA.';
 }
 
 function hideAllSections() {
@@ -370,7 +379,7 @@ function showDisconnectedState() {
   loginSection.classList.remove('hidden');
 }
 
-function showCreateOrgOptions(ownerTypeLabel, orgSafes = []) {
+function showCreateOrgOptions(orgSafes = []) {
   hideAllSections();
   setStatus('Logged in', 'success');
   renderOwnedOrgOptions(orgSafes);
@@ -939,14 +948,27 @@ async function loadSafeSigners() {
 
     activeSafeOwners = owners.map((owner) => getAddress(owner));
     const thresholdValue = BigInt(threshold).toString();
+    const canRemoveOwner = activeSafeOwners.length > 1;
     const rows = activeSafeOwners
       .map((owner) => {
         const isConnected = connectedAddress && owner.toLowerCase() === connectedAddress.toLowerCase();
-        return `<div class="trust-item"><span class="mono">${owner}</span><span class="muted">${isConnected ? 'Connected' : 'Signer'}</span></div>`;
+        const removeDisabledAttr = canRemoveOwner && !isConnected ? '' : 'disabled';
+        return `
+          <div class="trust-item">
+            <span class="mono">${owner}</span>
+            <div class="signer-actions">
+              <span class="muted">${isConnected ? 'Connected' : 'Signer'}</span>
+              <button class="btn-sm btn-danger remove-signer-btn" data-owner="${owner}" ${removeDisabledAttr}>Remove</button>
+            </div>
+          </div>
+        `;
       })
       .join('');
 
     safeSignersListEl.innerHTML = `<p class="muted">Threshold: ${thresholdValue}</p>${rows}`;
+    safeSignersListEl.querySelectorAll('.remove-signer-btn').forEach((btn) => {
+      btn.addEventListener('click', () => removeSafeSigner(btn.dataset.owner));
+    });
     renderFundRecipientOptions();
     updateFundFaucetButtonState();
   } catch (err) {
@@ -1025,6 +1047,95 @@ async function addSafeSigner() {
     showResult('error', `Add signer failed: ${decodeError(err)}`);
   } finally {
     addSafeSignerBtn.disabled = false;
+  }
+}
+
+async function removeSafeSigner(rawOwnerAddress) {
+  if (!isAddress(rawOwnerAddress)) {
+    showResult('error', 'Signer address is invalid.');
+    return;
+  }
+
+  if (!activeOrgAddress || !connectedAddress) {
+    showResult('error', 'Organization wallet is not ready.');
+    return;
+  }
+
+  const safeAbi = safeSingletonDeployment?.abi;
+  if (!safeAbi) {
+    showResult('error', 'Safe ABI unavailable.');
+    return;
+  }
+
+  const ownerToRemove = getAddress(rawOwnerAddress);
+  if (connectedAddress && ownerToRemove.toLowerCase() === connectedAddress.toLowerCase()) {
+    showResult('error', 'Connected wallet cannot be removed as a signer.');
+    return;
+  }
+  showResult('pending', `Removing signer ${ownerToRemove}…`);
+
+  try {
+    const owners = await publicClient.readContract({
+      address: getAddress(activeOrgAddress),
+      abi: safeAbi,
+      functionName: 'getOwners',
+    });
+    const threshold = await publicClient.readContract({
+      address: getAddress(activeOrgAddress),
+      abi: safeAbi,
+      functionName: 'getThreshold',
+    });
+
+    if (!owners.some((owner) => owner.toLowerCase() === connectedAddress.toLowerCase())) {
+      showResult('error', 'Connected wallet is not an owner of this Safe.');
+      return;
+    }
+
+    const ownerIndex = owners.findIndex(
+      (owner) => owner.toLowerCase() === ownerToRemove.toLowerCase()
+    );
+    if (ownerIndex === -1) {
+      showResult('error', 'Signer not found on this Safe.');
+      return;
+    }
+
+    if (owners.length <= 1) {
+      showResult('error', 'Cannot remove the last Safe owner.');
+      return;
+    }
+
+    const prevOwner =
+      ownerIndex === 0 ? SAFE_SENTINEL_OWNERS : getAddress(owners[ownerIndex - 1]);
+    const currentThreshold = BigInt(threshold);
+    const remainingOwners = BigInt(owners.length - 1);
+    const newThreshold = currentThreshold > remainingOwners ? remainingOwners : currentThreshold;
+
+    if (newThreshold < 1n) {
+      showResult('error', 'Invalid threshold after owner removal.');
+      return;
+    }
+
+    const removeSignerData = encodeFunctionData({
+      abi: safeAbi,
+      functionName: 'removeOwner',
+      args: [prevOwner, ownerToRemove, newThreshold],
+    });
+
+    const runner = createSafeOwnerRunner(connectedAddress, getAddress(activeOrgAddress));
+    lastTxHashes = [];
+    await runner.sendTransaction([
+      {
+        to: getAddress(activeOrgAddress),
+        data: removeSignerData,
+        value: 0n,
+      },
+    ]);
+
+    const links = lastTxHashes.length ? `<br>${txLinks(lastTxHashes)}` : '';
+    showResult('success', `Removed signer ${ownerToRemove}.${links}`);
+    await loadSafeSigners();
+  } catch (err) {
+    showResult('error', `Remove signer failed: ${decodeError(err)}`);
   }
 }
 
@@ -1240,6 +1351,7 @@ async function removeTrust(addr) {
 function fillWithdrawMax() {
   if (cachedWithdrawableAttoCircles <= 0n) return;
   withdrawAmountInput.value = attoToCirclesString(cachedWithdrawableAttoCircles);
+  updateWithdrawButtonState();
 }
 
 async function withdrawBalance() {
@@ -1345,6 +1457,7 @@ async function loadBalances() {
     cachedOrgBalances = [];
     cachedWithdrawableAttoCircles = 0n;
     updateWithdrawAvailableText();
+    updateWithdrawButtonState();
     if (balancesEl) balancesEl.innerHTML = '<p class="muted">No organization selected.</p>';
     return;
   }
@@ -1354,6 +1467,7 @@ async function loadBalances() {
     cachedOrgBalances = balances;
     cachedWithdrawableAttoCircles = sumWithdrawableAttoCircles(balances);
     updateWithdrawAvailableText();
+    updateWithdrawButtonState();
 
     if (!balances || balances.length === 0) {
       if (balancesEl) balancesEl.innerHTML = '<p class="muted">No token balances.</p>';
@@ -1374,6 +1488,7 @@ async function loadBalances() {
     cachedOrgBalances = [];
     cachedWithdrawableAttoCircles = 0n;
     updateWithdrawAvailableText();
+    updateWithdrawButtonState();
     if (balancesEl) balancesEl.innerHTML = `<p class="muted">Error: ${decodeError(err)}</p>`;
   }
 }
@@ -1394,11 +1509,7 @@ async function loadOrganizationDashboard(orgAddress, runner, statusLabel) {
   }
 
   orgAddrDisplay.textContent = orgAddress;
-  if (connectedAddress && connectedAddress.toLowerCase() !== orgAddress.toLowerCase()) {
-    backToOptionsBtn.classList.remove('hidden');
-  } else {
-    backToOptionsBtn.classList.add('hidden');
-  }
+  backToOptionsBtn.classList.remove('hidden');
 
   await Promise.allSettled([loadSafeSigners(), loadTrustRelations(), loadBalances()]);
 }
@@ -1410,9 +1521,15 @@ async function openOwnedOrganization(orgSafeAddress) {
   showResult('pending', `Opening organization ${truncAddr(orgSafeAddress)}…`);
 
   try {
+    const normalizedOrgAddress = getAddress(orgSafeAddress);
+    const runner =
+      connectedAddress.toLowerCase() === normalizedOrgAddress.toLowerCase()
+        ? createRunner(normalizedOrgAddress)
+        : createSafeOwnerRunner(connectedAddress, normalizedOrgAddress);
+
     await loadOrganizationDashboard(
-      orgSafeAddress,
-      createSafeOwnerRunner(connectedAddress, orgSafeAddress),
+      normalizedOrgAddress,
+      runner,
       'Organization (Owned Safe)'
     );
     hideResult();
@@ -1441,21 +1558,13 @@ async function loadAvatarState(preserveResult = false) {
 
   try {
     const connectedInfo = await humanSdk.data.getAvatar(connectedAddress);
-
-    if (isOrganizationType(connectedInfo)) {
-      await loadOrganizationDashboard(
-        connectedAddress,
-        createRunner(connectedAddress),
-        'Organization'
-      );
-      return;
-    }
-
-    const ownerTypeLabel = connectedInfo?.type || connectedInfo?.avatarType || 'Not registered';
     const storedOrgSafes = getStoredOrgSafes(connectedAddress);
+    const candidateOrgSafes = isOrganizationType(connectedInfo)
+      ? normalizeStoredOrgSafes([connectedAddress, ...storedOrgSafes])
+      : storedOrgSafes;
     const validOwnedOrgSafes = [];
 
-    for (const safe of storedOrgSafes) {
+    for (const safe of candidateOrgSafes) {
       try {
         const info = await humanSdk.data.getAvatar(safe);
         if (isOrganizationType(info)) validOwnedOrgSafes.push(safe);
@@ -1464,14 +1573,12 @@ async function loadAvatarState(preserveResult = false) {
       }
     }
 
-    if (validOwnedOrgSafes.length !== storedOrgSafes.length) {
-      setStoredOrgSafes(connectedAddress, validOwnedOrgSafes);
-    }
+    setStoredOrgSafes(connectedAddress, validOwnedOrgSafes);
 
-    showCreateOrgOptions(ownerTypeLabel, validOwnedOrgSafes);
+    showCreateOrgOptions(validOwnedOrgSafes);
   } catch {
     const fallbackSafes = connectedAddress ? getStoredOrgSafes(connectedAddress) : [];
-    showCreateOrgOptions('Not registered', fallbackSafes);
+    showCreateOrgOptions(fallbackSafes);
   }
 }
 
@@ -1552,6 +1659,7 @@ fundFaucetBtn.addEventListener('click', fundFaucetXdai);
 withdrawMaxBtn.addEventListener('click', fillWithdrawMax);
 withdrawBalanceBtn.addEventListener('click', withdrawBalance);
 withdrawTargetAddressInput.addEventListener('input', updateWithdrawButtonState);
+withdrawAmountInput.addEventListener('input', updateWithdrawButtonState);
 fundAmountXdaiInput.addEventListener('input', updateFundFaucetButtonState);
 fundRecipientAddressSelect.addEventListener('change', updateFundFaucetButtonState);
 startCreateOrgBtn.addEventListener('click', () => {
