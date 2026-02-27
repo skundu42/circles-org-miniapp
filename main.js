@@ -31,7 +31,7 @@ const RPC_FALLBACK_URLS = [
   'https://1rpc.io/gnosis',
 ];
 const SAFE_VERSION = '1.4.1';
-const OWNER_ORG_SAFE_MAP_KEY = 'circles-org-safe-by-owner-v1';
+const SAFE_TX_SERVICE_URL = 'https://safe-transaction-gnosis-chain.safe.global';
 const SAFE_SENTINEL_OWNERS = '0x0000000000000000000000000000000000000001';
 const TX_RECEIPT_TIMEOUT_MS = 12 * 60 * 1000;
 const TX_RECEIPT_POLL_MS = 3000;
@@ -141,6 +141,7 @@ let lastTxHashes = [];
 let cachedOrgBalances = [];
 let cachedWithdrawableAttoCircles = 0n;
 let activeSafeOwners = [];
+const sessionOrgSafesByOwner = new Map();
 
 /* ── DOM ─────────────────────────────────────────────────────────── */
 
@@ -425,21 +426,7 @@ function isOrganizationType(info) {
   return typeLower.includes('organization') || typeLower.includes('org');
 }
 
-function getMapFromStorage() {
-  try {
-    const raw = localStorage.getItem(OWNER_ORG_SAFE_MAP_KEY);
-    const parsed = raw ? JSON.parse(raw) : {};
-    return parsed && typeof parsed === 'object' ? parsed : {};
-  } catch {
-    return {};
-  }
-}
-
-function setMapInStorage(map) {
-  localStorage.setItem(OWNER_ORG_SAFE_MAP_KEY, JSON.stringify(map));
-}
-
-function normalizeStoredOrgSafes(value) {
+function normalizeOrgSafes(value) {
   const values = Array.isArray(value) ? value : [value];
   const seen = new Set();
   const out = [];
@@ -456,39 +443,46 @@ function normalizeStoredOrgSafes(value) {
   return out;
 }
 
-function getStoredOrgSafes(ownerAddress) {
-  const map = getMapFromStorage();
-  const value = map[ownerAddress.toLowerCase()];
-  return normalizeStoredOrgSafes(value);
+function getSessionOrgSafes(ownerAddress) {
+  const key = ownerAddress.toLowerCase();
+  return normalizeOrgSafes(sessionOrgSafesByOwner.get(key) || []);
 }
 
-function setStoredOrgSafes(ownerAddress, orgSafeAddresses) {
-  const map = getMapFromStorage();
-  map[ownerAddress.toLowerCase()] = normalizeStoredOrgSafes(orgSafeAddresses);
-  setMapInStorage(map);
+function setSessionOrgSafes(ownerAddress, orgSafeAddresses) {
+  const key = ownerAddress.toLowerCase();
+  sessionOrgSafesByOwner.set(key, normalizeOrgSafes(orgSafeAddresses));
 }
 
-function addStoredOrgSafe(ownerAddress, orgSafeAddress) {
-  const existing = getStoredOrgSafes(ownerAddress);
+function addSessionOrgSafe(ownerAddress, orgSafeAddress) {
+  const existing = getSessionOrgSafes(ownerAddress);
   existing.push(getAddress(orgSafeAddress));
-  setStoredOrgSafes(ownerAddress, existing);
+  setSessionOrgSafes(ownerAddress, existing);
 }
 
-function removeStoredOrgSafe(ownerAddress, orgSafeAddress) {
-  const map = getMapFromStorage();
-  if (!orgSafeAddress) {
-    delete map[ownerAddress.toLowerCase()];
-    setMapInStorage(map);
-    return;
+async function fetchOwnerSafeCandidates(ownerAddress, sdkInstance) {
+  const url = `${SAFE_TX_SERVICE_URL}/api/v1/owners/${ownerAddress}/safes/`;
+
+  try {
+    const response = await fetch(url);
+    if (!response.ok) return [];
+    const data = await response.json();
+    const ownerSafes = normalizeOrgSafes(data?.safes || []);
+    if (!sdkInstance) return ownerSafes;
+
+    const orgSafes = [];
+    for (const safeAddress of ownerSafes) {
+      try {
+        const info = await sdkInstance.data.getAvatar(safeAddress);
+        if (isOrganizationType(info)) orgSafes.push(safeAddress);
+      } catch {
+        // Ignore addresses that are not registered org avatars.
+      }
+    }
+
+    return orgSafes;
+  } catch {
+    return [];
   }
-
-  const remaining = normalizeStoredOrgSafes(map[ownerAddress.toLowerCase()]).filter(
-    (safe) => safe.toLowerCase() !== orgSafeAddress.toLowerCase()
-  );
-
-  if (remaining.length === 0) delete map[ownerAddress.toLowerCase()];
-  else map[ownerAddress.toLowerCase()] = remaining;
-  setMapInStorage(map);
 }
 
 function getDeploymentAddress(deployment) {
@@ -846,7 +840,7 @@ async function registerOrganization() {
       const maybeOrgInfo = await humanSdk.data.getAvatar(predictedOrgSafe).catch(() => null);
       if (!isOrganizationType(maybeOrgInfo)) throw err;
 
-      addStoredOrgSafe(connectedAddress, predictedOrgSafe);
+      addSessionOrgSafe(connectedAddress, predictedOrgSafe);
 
       const links = lastTxHashes.length ? `<br>${txLinks(lastTxHashes)}` : '';
       showResult(
@@ -881,7 +875,7 @@ async function registerOrganization() {
       throw new Error('Safe deployed, but org registration was not confirmed.');
     }
 
-    addStoredOrgSafe(connectedAddress, resolvedOrgSafe);
+    addSessionOrgSafe(connectedAddress, resolvedOrgSafe);
 
     const links = lastTxHashes.length ? `<br>${txLinks(lastTxHashes)}` : '';
     showResult(
@@ -1557,11 +1551,16 @@ async function loadAvatarState(preserveResult = false) {
   updateFundFaucetButtonState();
 
   try {
-    const connectedInfo = await humanSdk.data.getAvatar(connectedAddress);
-    const storedOrgSafes = getStoredOrgSafes(connectedAddress);
-    const candidateOrgSafes = isOrganizationType(connectedInfo)
-      ? normalizeStoredOrgSafes([connectedAddress, ...storedOrgSafes])
-      : storedOrgSafes;
+    const [connectedInfo, ownerSafeCandidates] = await Promise.all([
+      humanSdk.data.getAvatar(connectedAddress).catch(() => null),
+      fetchOwnerSafeCandidates(connectedAddress, humanSdk),
+    ]);
+    const sessionOrgSafes = getSessionOrgSafes(connectedAddress);
+    const candidateOrgSafes = normalizeOrgSafes([
+      ...(isOrganizationType(connectedInfo) ? [connectedAddress] : []),
+      ...ownerSafeCandidates,
+      ...sessionOrgSafes,
+    ]);
     const validOwnedOrgSafes = [];
 
     for (const safe of candidateOrgSafes) {
@@ -1569,15 +1568,14 @@ async function loadAvatarState(preserveResult = false) {
         const info = await humanSdk.data.getAvatar(safe);
         if (isOrganizationType(info)) validOwnedOrgSafes.push(safe);
       } catch {
-        // Skip stale entries.
+        // Skip entries that are not registered org avatars.
       }
     }
 
-    setStoredOrgSafes(connectedAddress, validOwnedOrgSafes);
-
+    setSessionOrgSafes(connectedAddress, validOwnedOrgSafes);
     showCreateOrgOptions(validOwnedOrgSafes);
   } catch {
-    const fallbackSafes = connectedAddress ? getStoredOrgSafes(connectedAddress) : [];
+    const fallbackSafes = connectedAddress ? getSessionOrgSafes(connectedAddress) : [];
     showCreateOrgOptions(fallbackSafes);
   }
 }
