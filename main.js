@@ -1681,7 +1681,7 @@ async function openOwnedOrganization(orgSafeAddress) {
     await loadOrganizationDashboard(
       normalizedOrgAddress,
       runner,
-      'Organization (Owned Safe)'
+      'Organization'
     );
     hideResult();
   } catch (err) {
