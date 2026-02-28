@@ -1811,7 +1811,7 @@ if (typeof window !== 'undefined') {
 /* ── Event Listeners ─────────────────────────────────────────────── */
 
 registerBtn.addEventListener('click', registerOrganization);
-addTrustBtn.addEventListener('click', addTrust);
+addTrustBtn.addEventListener('click', () => addTrust());
 addSafeSignerBtn.addEventListener('click', addSafeSigner);
 withdrawMaxBtn.addEventListener('click', fillWithdrawMax);
 withdrawBalanceBtn.addEventListener('click', withdrawBalance);
