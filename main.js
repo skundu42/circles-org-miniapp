@@ -43,6 +43,10 @@ const FAUCET_XDAI_ADDRESS = getAddress('0xbBD0173aafB8b52d6910DD3836dCFE85fc25CA
 const FAUCET_GROUP_TOKEN_ADDRESS = getAddress('0xc19bc204eb1c1d5b3fe500e5e5dfabab625f286c');
 const FAUCET_CAP_WEI = 1_000_000_000_000_000_000n;
 const FAUCET_PRICE_WEI = 10_000_000_000_000_000n;
+const MAX_ORG_IMAGE_BYTES = 8 * 1024 * 1024;
+const ORG_PREVIEW_IMAGE_DIMENSION = 256;
+const MAX_ORG_PREVIEW_IMAGE_BYTES = 150 * 1024;
+const ORG_PREVIEW_IMAGE_QUALITIES = [0.9, 0.82, 0.74, 0.66, 0.58, 0.5, 0.42, 0.34, 0.26];
 const HUB_SAFE_TRANSFER_FROM_ABI = [
   {
     type: 'function',
@@ -143,6 +147,8 @@ let activeSafeOwners = [];
 let fundingInProgress = false;
 let trustSearchDebounceTimer = null;
 let trustSearchRequestId = 0;
+let selectedOrgImageDataUrl = '';
+let orgImageProcessing = false;
 const sessionOrgSafesByOwner = new Map();
 
 /* ── DOM ─────────────────────────────────────────────────────────── */
@@ -160,6 +166,10 @@ const optionsOrgList = document.getElementById('options-org-list');
 
 const orgNameInput = document.getElementById('org-name');
 const orgDescInput = document.getElementById('org-description');
+const orgImageInput = document.getElementById('org-image');
+const orgImagePreviewWrap = document.getElementById('org-image-preview-wrap');
+const orgImagePreview = document.getElementById('org-image-preview');
+const clearOrgImageBtn = document.getElementById('clear-org-image-btn');
 const registerBtn = document.getElementById('register-btn');
 const backToOptionsBtn = document.getElementById('back-to-options-btn');
 
@@ -341,6 +351,146 @@ function estimateFaucetXdaiPayout(amountAttoCircles, alreadyClaimedWei) {
   const maxAcceptedValue = remainingCap * FAUCET_CAP_WEI / FAUCET_PRICE_WEI;
   const acceptedValue = amountAttoCircles > maxAcceptedValue ? maxAcceptedValue : amountAttoCircles;
   return acceptedValue * FAUCET_PRICE_WEI / FAUCET_CAP_WEI;
+}
+
+function updateRegisterButtonState() {
+  registerBtn.disabled = !connectedAddress || !orgNameInput.value.trim() || orgImageProcessing;
+}
+
+function renderOrgImagePreview(dataUrl = '') {
+  if (!orgImagePreviewWrap || !orgImagePreview) return;
+
+  if (!dataUrl) {
+    orgImagePreview.removeAttribute('src');
+    orgImagePreviewWrap.classList.add('hidden');
+    return;
+  }
+
+  orgImagePreview.src = dataUrl;
+  orgImagePreviewWrap.classList.remove('hidden');
+}
+
+function clearOrgImageSelection() {
+  selectedOrgImageDataUrl = '';
+  if (orgImageInput) orgImageInput.value = '';
+  renderOrgImagePreview();
+}
+
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(new Error('Could not read selected image file.'));
+    reader.readAsDataURL(file);
+  });
+}
+
+function loadImageFromDataUrl(dataUrl) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error('Could not decode selected image.'));
+    image.src = dataUrl;
+  });
+}
+
+function getDataUrlByteLength(dataUrl) {
+  const commaIndex = dataUrl.indexOf(',');
+  if (commaIndex === -1) return 0;
+
+  const metadata = dataUrl.slice(0, commaIndex);
+  const payload = dataUrl.slice(commaIndex + 1);
+  if (!payload) return 0;
+
+  if (metadata.includes(';base64')) {
+    const padding = payload.endsWith('==') ? 2 : payload.endsWith('=') ? 1 : 0;
+    return Math.floor((payload.length * 3) / 4) - padding;
+  }
+
+  try {
+    return decodeURIComponent(payload).length;
+  } catch {
+    return payload.length;
+  }
+}
+
+async function convertImageFileToProfileDataUrl(file) {
+  if (!file?.type?.startsWith('image/')) {
+    throw new Error('Please select a valid image file.');
+  }
+  if (file.size > MAX_ORG_IMAGE_BYTES) {
+    throw new Error('Image size must be 8MB or less.');
+  }
+
+  const sourceDataUrl = await readFileAsDataUrl(file);
+  const sourceImage = await loadImageFromDataUrl(sourceDataUrl);
+  const sourceWidth = sourceImage.naturalWidth || sourceImage.width;
+  const sourceHeight = sourceImage.naturalHeight || sourceImage.height;
+  if (!sourceWidth || !sourceHeight) {
+    throw new Error('Selected image has invalid dimensions.');
+  }
+
+  const canvas = document.createElement('canvas');
+  canvas.width = ORG_PREVIEW_IMAGE_DIMENSION;
+  canvas.height = ORG_PREVIEW_IMAGE_DIMENSION;
+
+  const context = canvas.getContext('2d');
+  if (!context) {
+    throw new Error('Image processing is unavailable in this browser.');
+  }
+
+  const squareSide = Math.min(sourceWidth, sourceHeight);
+  const sourceX = Math.floor((sourceWidth - squareSide) / 2);
+  const sourceY = Math.floor((sourceHeight - squareSide) / 2);
+
+  context.imageSmoothingEnabled = true;
+  context.imageSmoothingQuality = 'high';
+  context.fillStyle = '#ffffff';
+  context.fillRect(0, 0, ORG_PREVIEW_IMAGE_DIMENSION, ORG_PREVIEW_IMAGE_DIMENSION);
+  context.drawImage(
+    sourceImage,
+    sourceX,
+    sourceY,
+    squareSide,
+    squareSide,
+    0,
+    0,
+    ORG_PREVIEW_IMAGE_DIMENSION,
+    ORG_PREVIEW_IMAGE_DIMENSION
+  );
+
+  for (const quality of ORG_PREVIEW_IMAGE_QUALITIES) {
+    const dataUrl = canvas.toDataURL('image/jpeg', quality);
+    if (getDataUrlByteLength(dataUrl) <= MAX_ORG_PREVIEW_IMAGE_BYTES) {
+      return dataUrl;
+    }
+  }
+
+  throw new Error('Could not compress image to 256x256 under 150KB.');
+}
+
+async function handleOrgImageChange() {
+  const file = orgImageInput?.files?.[0];
+  if (!file) {
+    clearOrgImageSelection();
+    updateRegisterButtonState();
+    return;
+  }
+
+  orgImageProcessing = true;
+  updateRegisterButtonState();
+
+  try {
+    selectedOrgImageDataUrl = await convertImageFileToProfileDataUrl(file);
+    renderOrgImagePreview(selectedOrgImageDataUrl);
+    hideResult();
+  } catch (err) {
+    clearOrgImageSelection();
+    showResult('error', `Could not prepare organization image: ${decodeError(err)}`);
+  } finally {
+    orgImageProcessing = false;
+    updateRegisterButtonState();
+  }
 }
 
 function updateWithdrawAvailableText() {
@@ -836,6 +986,9 @@ async function registerOrganization() {
     const profile = { name };
     const desc = orgDescInput.value.trim();
     if (desc) profile.description = desc;
+    if (selectedOrgImageDataUrl) {
+      profile.previewImageUrl = selectedOrgImageDataUrl;
+    }
 
     const profileCid = await humanSdk.profilesClient.create(profile);
     const metadataDigest = cidV0ToHex(profileCid);
@@ -936,6 +1089,8 @@ async function registerOrganization() {
         `Organization registered via dedicated Safe: <a href="https://explorer.aboutcircles.com/avatar/${predictedOrgSafe}/" target="_blank" rel="noopener">${predictedOrgSafe}</a><br><span class="muted">Receipt polling timed out, but on-chain state confirms registration.</span>${links}`
       );
 
+      clearOrgImageSelection();
+      updateRegisterButtonState();
       await loadAvatarState(true);
       return;
     }
@@ -971,6 +1126,8 @@ async function registerOrganization() {
       `Organization registered via dedicated Safe: <a href="https://explorer.aboutcircles.com/avatar/${resolvedOrgSafe}/" target="_blank" rel="noopener">${resolvedOrgSafe}</a>${links}`
     );
 
+    clearOrgImageSelection();
+    updateRegisterButtonState();
     await loadAvatarState(true);
   } catch (err) {
     if (isPasskeyAutoConnectError(err)) {
@@ -982,7 +1139,7 @@ async function registerOrganization() {
       showResult('error', `Registration failed: ${decodeError(err)}`);
     }
   } finally {
-    registerBtn.disabled = false;
+    updateRegisterButtonState();
   }
 }
 
@@ -1821,7 +1978,7 @@ trustAddrInput.addEventListener('input', updateTrustSearchOptions);
 startCreateOrgBtn.addEventListener('click', () => {
   optionsSection.classList.add('hidden');
   registerSection.classList.remove('hidden');
-  registerBtn.disabled = !connectedAddress || !orgNameInput.value.trim();
+  updateRegisterButtonState();
 });
 cancelRegisterBtn.addEventListener('click', () => {
   registerSection.classList.add('hidden');
@@ -1833,7 +1990,13 @@ backToOptionsBtn.addEventListener('click', async () => {
 });
 
 orgNameInput.addEventListener('input', () => {
-  registerBtn.disabled = !connectedAddress || !orgNameInput.value.trim();
+  updateRegisterButtonState();
+});
+orgImageInput?.addEventListener('change', handleOrgImageChange);
+clearOrgImageBtn?.addEventListener('click', () => {
+  clearOrgImageSelection();
+  hideResult();
+  updateRegisterButtonState();
 });
 
 /* ── Init ─────────────────────────────────────────────────────────── */
@@ -1841,3 +2004,4 @@ orgNameInput.addEventListener('input', () => {
 showDisconnectedState();
 updateWithdrawButtonState();
 updateFundFaucetButtonState();
+updateRegisterButtonState();

@@ -146,6 +146,11 @@ h2:first-child {
   margin-top: 10px;
 }
 
+.field-hint {
+  margin: 6px 0 0;
+  font-size: 12px;
+}
+
 .field label {
   display: block;
   margin-bottom: 6px;
@@ -202,6 +207,31 @@ h2:first-child {
   width: auto;
   margin-top: 0;
   padding: 11px 20px;
+}
+
+.org-image-preview-wrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+  padding: 10px;
+  border-radius: 10px;
+  border: 1px solid var(--line-soft);
+  background: #fcfdff;
+}
+
+.org-image-preview {
+  width: 56px;
+  height: 56px;
+  border-radius: 10px;
+  object-fit: cover;
+  border: 1px solid var(--line-soft);
+  background: #ffffff;
+  flex-shrink: 0;
+}
+
+#clear-org-image-btn {
+  margin-top: 0;
 }
 
 button {

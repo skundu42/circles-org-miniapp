@@ -51,6 +51,15 @@
           <label for="org-description">Description <span class="optional">(optional)</span></label>
           <textarea id="org-description" rows="3" placeholder="What does this organization do?"></textarea>
         </div>
+        <div class="field">
+          <label for="org-image">Organization Image <span class="optional">(optional)</span></label>
+          <input type="file" id="org-image" accept="image/*" />
+          <p class="muted field-hint">PNG, JPG, GIF, or WEBP (max 8MB). Cropped to 256x256 and compressed for profile preview.</p>
+          <div id="org-image-preview-wrap" class="org-image-preview-wrap hidden">
+            <img id="org-image-preview" class="org-image-preview" alt="Organization image preview" />
+            <button id="clear-org-image-btn" type="button" class="btn-sm btn-secondary">Remove image</button>
+          </div>
+        </div>
         <button id="register-btn" disabled>Create an Organization</button>
         <button id="cancel-register-btn" class="btn-secondary">Back</button>
       </div>
