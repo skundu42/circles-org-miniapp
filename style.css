@@ -1,22 +1,23 @@
 :root {
-  --bg-a: #f3f7ff;
-  --bg-b: #fcf8f3;
-  --ink: #1a2340;
-  --muted: #6e7694;
+  --bg-a: #faf5f1;
+  --bg-b: #f6f7f9;
+  --ink: #05061a;
+  --muted: #51526e;
   --card: #ffffff;
-  --line: #d8deef;
-  --line-soft: #e6eaf6;
-  --accent: #0f4ad7;
-  --accent-soft: #e7efff;
-  --success-bg: #effdf2;
-  --success-line: #b7efc2;
-  --success-ink: #157a2f;
-  --warn-bg: #fff9ea;
-  --warn-line: #f8e4b3;
-  --warn-ink: #975a16;
-  --error-bg: #fff1f1;
-  --error-line: #ffcaca;
-  --error-ink: #b42318;
+  --line: #eee7e2;
+  --line-soft: #f4eee9;
+  --accent: #0e00a8;
+  --accent-mid: #4335df;
+  --accent-soft: #eae8ff;
+  --success-bg: #dcfce7;
+  --success-line: #a7f3d0;
+  --success-ink: #145324;
+  --warn-bg: #feebc7;
+  --warn-line: #f5d89a;
+  --warn-ink: #8a482c;
+  --error-bg: #fee2e2;
+  --error-line: #fca5a5;
+  --error-ink: #7f1d1d;
 }
 
 * {
@@ -25,11 +26,11 @@
 
 body {
   margin: 0;
-  font-family: "Space Grotesk", "Avenir Next", "Segoe UI", sans-serif;
+  font-family: "Space Grotesk", -apple-system, ui-sans-serif, system-ui, "Segoe UI", sans-serif;
   color: var(--ink);
   background:
-    radial-gradient(1200px 500px at 0% 0%, #e7f0ff 0%, transparent 65%),
-    radial-gradient(900px 500px at 100% 20%, #fff0dc 0%, transparent 70%),
+    radial-gradient(1200px 500px at 0% 0%, rgba(14, 0, 168, 0.03) 0%, transparent 65%),
+    radial-gradient(900px 500px at 100% 20%, rgba(255, 125, 62, 0.05) 0%, transparent 70%),
     linear-gradient(145deg, var(--bg-a), var(--bg-b));
   min-height: 100vh;
   padding: 24px 14px 48px;
@@ -47,8 +48,8 @@ body {
   border-radius: 22px;
   padding: 22px;
   box-shadow:
-    0 8px 30px rgba(26, 35, 64, 0.08),
-    inset 0 1px 0 #ffffff;
+    0 8px 30px rgba(5, 6, 26, 0.08),
+    inset 0 1px 0 #fff;
 }
 
 h1 {
@@ -171,7 +172,7 @@ h2:first-child {
 .field textarea {
   width: 100%;
   border-radius: 11px;
-  border: 1px solid var(--line-soft);
+  border: 1px solid var(--line);
   background: #ffffff;
   color: var(--ink);
   padding: 11px 12px;
@@ -181,15 +182,15 @@ h2:first-child {
 
 .field textarea {
   resize: vertical;
-  font-family: "Space Grotesk", "Avenir Next", "Segoe UI", sans-serif;
+  font-family: "Space Grotesk", -apple-system, ui-sans-serif, system-ui, "Segoe UI", sans-serif;
 }
 
 .field input:focus,
 .field select:focus,
 .field textarea:focus {
   outline: none;
-  border-color: #8ba7ef;
-  box-shadow: 0 0 0 4px rgba(15, 74, 215, 0.12);
+  border-color: var(--accent-mid);
+  box-shadow: 0 0 0 4px rgba(14, 0, 168, 0.10);
 }
 
 .input-row {
@@ -217,7 +218,7 @@ h2:first-child {
   padding: 10px;
   border-radius: 10px;
   border: 1px solid var(--line-soft);
-  background: #fcfdff;
+  background: var(--bg-a);
 }
 
 .org-image-preview {
@@ -240,7 +241,7 @@ button {
   border-radius: 999px;
   margin-top: 10px;
   padding: 12px 16px;
-  background: linear-gradient(130deg, var(--accent), #1f6bff);
+  background: linear-gradient(130deg, var(--accent), var(--accent-mid));
   color: #ffffff;
   font-weight: 600;
   font-size: 14px;
@@ -264,7 +265,7 @@ button:disabled {
 }
 
 .btn-secondary:hover:not(:disabled) {
-  background: #f7f9ff;
+  background: var(--bg-a);
   filter: none;
 }
 
@@ -273,7 +274,7 @@ button:disabled {
 .info-box {
   border-radius: 12px;
   border: 1px solid var(--line-soft);
-  background: #fafbff;
+  background: var(--bg-a);
   padding: 14px 16px;
   margin-top: 14px;
 }
@@ -406,7 +407,7 @@ button:disabled {
   border: 1px solid var(--line-soft);
   border-radius: 10px;
   padding: 0 10px;
-  background: #fcfdff;
+  background: var(--bg-a);
 }
 
 .trust-search-item {
