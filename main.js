@@ -167,6 +167,7 @@ const optionsOrgList = document.getElementById('options-org-list');
 const orgNameInput = document.getElementById('org-name');
 const orgDescInput = document.getElementById('org-description');
 const orgImageInput = document.getElementById('org-image');
+const orgImageDropzone = document.getElementById('org-image-dropzone');
 const orgImagePreviewWrap = document.getElementById('org-image-preview-wrap');
 const orgImagePreview = document.getElementById('org-image-preview');
 const clearOrgImageBtn = document.getElementById('clear-org-image-btn');
@@ -176,6 +177,8 @@ const backToOptionsBtn = document.getElementById('back-to-options-btn');
 const orgNameDisplay = document.getElementById('org-name-display');
 const orgAddrDisplay = document.getElementById('org-address-display');
 const orgBalanceDisplay = document.getElementById('org-balance-display');
+const orgDashboardAvatarWrap = document.getElementById('org-dashboard-avatar-wrap');
+const orgDashboardAvatar = document.getElementById('org-dashboard-avatar');
 const trustAddrInput = document.getElementById('trust-address');
 const addTrustBtn = document.getElementById('add-trust-btn');
 const trustSearchResultsEl = document.getElementById('trust-search-results');
@@ -363,11 +366,13 @@ function renderOrgImagePreview(dataUrl = '') {
   if (!dataUrl) {
     orgImagePreview.removeAttribute('src');
     orgImagePreviewWrap.classList.add('hidden');
+    if (orgImageDropzone) orgImageDropzone.classList.remove('hidden');
     return;
   }
 
   orgImagePreview.src = dataUrl;
   orgImagePreviewWrap.classList.remove('hidden');
+  if (orgImageDropzone) orgImageDropzone.classList.add('hidden');
 }
 
 function clearOrgImageSelection() {
@@ -586,7 +591,7 @@ function showDisconnectedState() {
   hideResult();
   setStatus('Not connected', 'disconnected');
   registerBtn.disabled = true;
-  safeSignersListEl.innerHTML = '<p class="muted">Connect a wallet to load signers.</p>';
+  safeSignersListEl.innerHTML = '<p class="muted">No signers loaded yet.</p>';
   activeSafeOwners = [];
   cachedWithdrawableAttoCircles = 0n;
   resetTrustSearchState('Connect a wallet to search.');
@@ -606,21 +611,27 @@ function showCreateOrgOptions(orgOptions = []) {
 
 function renderOwnedOrgOptions(orgOptions) {
   if (!orgOptions || orgOptions.length === 0) {
-    optionsOrgList.innerHTML = '<p class="muted">No organizations yet.</p>';
+    optionsOrgList.innerHTML = '<p class="muted">No organizations yet. Create one below to get started.</p>';
     return;
   }
 
   optionsOrgList.innerHTML = orgOptions
     .map(
-      (org) => `
+      (org) => {
+        const imgHtml = org.imageUrl
+          ? `<img class="org-avatar" src="${escapeHtml(org.imageUrl)}" alt="" />`
+          : `<div class="org-avatar org-avatar-placeholder"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg></div>`;
+        return `
       <div class="org-item">
-        <div>
+        ${imgHtml}
+        <div class="org-item-info">
           <div class="org-name">${escapeHtml(org.name || truncAddr(org.address))}</div>
           <a class="org-link mono" href="https://explorer.aboutcircles.com/avatar/${org.address}/" target="_blank" rel="noopener">${escapeHtml(truncAddr(org.address))}</a>
         </div>
         <button class="btn-sm org-open-btn" data-org-safe="${org.address}">Open</button>
       </div>
-    `
+    `;
+      }
     )
     .join('');
 
@@ -637,9 +648,10 @@ async function enrichOrganizationOptions(orgAddresses, sdkInstance) {
       try {
         const profile = await sdkInstance.rpc.profile.getProfileByAddress(address);
         const name = profile?.name?.trim();
-        return { address, name: name || null };
+        const imageUrl = profile?.previewImageUrl || profile?.imageUrl || null;
+        return { address, name: name || null, imageUrl };
       } catch {
-        return { address, name: null };
+        return { address, name: null, imageUrl: null };
       }
     })
   );
@@ -1163,7 +1175,7 @@ async function loadSafeSigners() {
     return;
   }
 
-  safeSignersListEl.innerHTML = '<p class="muted">Loading signers…</p>';
+  safeSignersListEl.innerHTML = '<div class="shimmer-block"></div>';
 
   try {
     const owners = await publicClient.readContract({
@@ -1723,7 +1735,7 @@ async function withdrawBalance() {
 /* ── Data Loading ────────────────────────────────────────────────── */
 
 async function loadTrustRelations() {
-  trustListEl.innerHTML = '<p class="muted">Loading…</p>';
+  trustListEl.innerHTML = '<div class="shimmer-block"></div>';
 
   if (!orgSdk || !activeOrgAddress) {
     trustListEl.innerHTML = '<p class="muted">No organization selected.</p>';
@@ -1809,15 +1821,23 @@ async function loadOrganizationDashboard(orgAddress, runner, statusLabel) {
   setStatus(statusLabel, 'success');
   dashboardSection.classList.remove('hidden');
 
+  // Reset dashboard header to loading state
+  orgNameDisplay.textContent = '—';
+  orgAddrDisplay.textContent = orgAddress;
+  if (orgDashboardAvatarWrap) orgDashboardAvatarWrap.classList.add('hidden');
+  backToOptionsBtn.classList.remove('hidden');
+
   try {
     const profile = await avatar.profile.get();
     orgNameDisplay.textContent = profile?.name || '—';
+    const imageUrl = profile?.previewImageUrl || profile?.imageUrl || null;
+    if (imageUrl && orgDashboardAvatar && orgDashboardAvatarWrap) {
+      orgDashboardAvatar.src = imageUrl;
+      orgDashboardAvatarWrap.classList.remove('hidden');
+    }
   } catch {
     orgNameDisplay.textContent = '—';
   }
-
-  orgAddrDisplay.textContent = orgAddress;
-  backToOptionsBtn.classList.remove('hidden');
 
   await Promise.allSettled([loadSafeSigners(), loadTrustRelations(), loadBalances()]);
 }
@@ -1826,7 +1846,16 @@ async function openOwnedOrganization(orgSafeAddress) {
   if (!connectedAddress || !humanSdk) return;
 
   hideAllSections();
-  showResult('pending', `Opening organization ${truncAddr(orgSafeAddress)}…`);
+
+  // Show the dashboard section immediately with loading placeholders
+  dashboardSection.classList.remove('hidden');
+  orgNameDisplay.textContent = '—';
+  orgAddrDisplay.textContent = truncAddr(orgSafeAddress);
+  orgBalanceDisplay.textContent = '…';
+  if (orgDashboardAvatarWrap) orgDashboardAvatarWrap.classList.add('hidden');
+  safeSignersListEl.innerHTML = '<div class="shimmer-block"></div>';
+  trustListEl.innerHTML = '<div class="shimmer-block"></div>';
+  setStatus('Loading…', 'pending');
 
   try {
     const normalizedOrgAddress = getAddress(orgSafeAddress);
@@ -1853,6 +1882,11 @@ async function loadAvatarState(preserveResult = false) {
 
   hideAllSections();
   if (!preserveResult) hideResult();
+
+  // Show options section immediately with loading shimmer
+  optionsOrgList.innerHTML = '<div class="shimmer-block"></div>';
+  optionsSection.classList.remove('hidden');
+  setStatus('Loading…', 'pending');
 
   avatar = null;
   orgSdk = null;
@@ -1998,6 +2032,33 @@ clearOrgImageBtn?.addEventListener('click', () => {
   hideResult();
   updateRegisterButtonState();
 });
+
+/* ── Dropzone ─────────────────────────────────────────────────────── */
+
+if (orgImageDropzone && orgImageInput) {
+  orgImageDropzone.addEventListener('click', () => orgImageInput.click());
+
+  orgImageDropzone.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    orgImageDropzone.classList.add('dragover');
+  });
+
+  orgImageDropzone.addEventListener('dragleave', () => {
+    orgImageDropzone.classList.remove('dragover');
+  });
+
+  orgImageDropzone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    orgImageDropzone.classList.remove('dragover');
+    const file = e.dataTransfer?.files?.[0];
+    if (file) {
+      const dt = new DataTransfer();
+      dt.items.add(file);
+      orgImageInput.files = dt.files;
+      handleOrgImageChange();
+    }
+  });
+}
 
 /* ── Init ─────────────────────────────────────────────────────────── */
 
