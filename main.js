@@ -1,4 +1,5 @@
 import {
+  concatHex,
   createPublicClient,
   decodeEventLog,
   decodeFunctionResult,
@@ -9,7 +10,10 @@ import {
   hexToBytes,
   http,
   isAddress,
+  numberToHex,
   parseAbiItem,
+  pad,
+  size,
   zeroAddress,
 } from 'viem';
 import { gnosis } from 'viem/chains';
@@ -18,6 +22,7 @@ import { Sdk } from '@aboutcircles/sdk';
 import { cidV0ToHex } from '@aboutcircles/sdk-utils';
 import {
   getCompatibilityFallbackHandlerDeployment,
+  getMultiSendCallOnlyDeployment,
   getProxyFactoryDeployment,
   getSafeSingletonDeployment,
 } from '@safe-global/safe-deployments';
@@ -37,6 +42,8 @@ const TX_RECEIPT_TIMEOUT_MS = 12 * 60 * 1000;
 const TX_RECEIPT_POLL_MS = 3000;
 const ATTO_CIRCLES_DECIMALS = 18n;
 const USER_OP_LOOKBACK_BLOCKS = 5000n;
+const SAFE_OPERATION_CALL = 0;
+const SAFE_OPERATION_DELEGATE_CALL = 1;
 const ENTRYPOINT_V07_ADDRESS = '0x0000000071727de22e5e9d8baf0edac6f37da032';
 const HUB_V2_ADDRESS = '0xc12C1E50ABB450d6205Ea2C3Fa861b3B834d13e8';
 const FAUCET_XDAI_ADDRESS = getAddress('0xbBD0173aafB8b52d6910DD3836dCFE85fc25CA8a');
@@ -146,6 +153,10 @@ const proxyFactoryDeployment = getProxyFactoryDeployment({
   version: SAFE_VERSION,
 });
 const compatibilityFallbackHandlerDeployment = getCompatibilityFallbackHandlerDeployment({
+  network: String(gnosis.id),
+  version: SAFE_VERSION,
+});
+const multiSendCallOnlyDeployment = getMultiSendCallOnlyDeployment({
   network: String(gnosis.id),
   version: SAFE_VERSION,
 });
@@ -267,6 +278,40 @@ function txLinks(hashes) {
         `<a href="https://gnosisscan.io/tx/${h}" target="_blank" rel="noopener">${h}</a>`
     )
     .join('<br>');
+}
+
+function getMultiSendCallOnlyAddress() {
+  const address =
+    multiSendCallOnlyDeployment?.networkAddresses?.[String(gnosis.id)] ||
+    multiSendCallOnlyDeployment?.defaultAddress;
+
+  if (!address || !isAddress(address)) {
+    throw new Error('Safe MultiSendCallOnly deployment is unavailable.');
+  }
+
+  return getAddress(address);
+}
+
+function encodeMultiSendTransactions(txs) {
+  if (!Array.isArray(txs) || txs.length === 0) return '0x';
+
+  return concatHex(
+    txs.map((tx) => {
+      const to = tx?.to && isAddress(tx.to) ? getAddress(tx.to) : null;
+      if (!to) throw new Error('Safe multisend transaction target is invalid.');
+
+      const data = tx?.data || '0x';
+      const value = tx?.value ? BigInt(tx.value) : 0n;
+
+      return concatHex([
+        pad(numberToHex(SAFE_OPERATION_CALL), { size: 1 }),
+        pad(to, { size: 20 }),
+        pad(numberToHex(value), { size: 32 }),
+        pad(numberToHex(size(data)), { size: 32 }),
+        data,
+      ]);
+    })
+  );
 }
 
 function getDirectTransferAmount(balance) {
@@ -1030,34 +1075,60 @@ function createRunner(address) {
 function createSafeOwnerRunner(ownerAddress, safeAddress) {
   const safeAbi = safeSingletonDeployment?.abi;
   if (!safeAbi) throw new Error('Safe singleton ABI is unavailable.');
+  const multiSendAbi = multiSendCallOnlyDeployment?.abi;
+  if (!multiSendAbi) throw new Error('Safe MultiSendCallOnly ABI is unavailable.');
+  const multiSendAddress = getMultiSendCallOnlyAddress();
 
   return {
     address: safeAddress,
     async sendTransaction(txs) {
-      const signature = buildPrevalidatedSignature(ownerAddress);
+      if (!Array.isArray(txs) || txs.length === 0) {
+        throw new Error('No transactions supplied.');
+      }
 
-      const safeExecTxs = txs.map((tx) => ({
+      const signature = buildPrevalidatedSignature(ownerAddress);
+      const execArgs =
+        txs.length === 1
+          ? [
+              txs[0].to,
+              txs[0].value ? BigInt(txs[0].value) : 0n,
+              txs[0].data || '0x',
+              SAFE_OPERATION_CALL,
+              0n,
+              0n,
+              0n,
+              zeroAddress,
+              zeroAddress,
+              signature,
+            ]
+          : [
+              multiSendAddress,
+              0n,
+              encodeFunctionData({
+                abi: multiSendAbi,
+                functionName: 'multiSend',
+                args: [encodeMultiSendTransactions(txs)],
+              }),
+              SAFE_OPERATION_DELEGATE_CALL,
+              0n,
+              0n,
+              0n,
+              zeroAddress,
+              zeroAddress,
+              signature,
+            ];
+
+      const safeExecTx = {
         to: safeAddress,
         value: 0n,
         data: encodeFunctionData({
           abi: safeAbi,
           functionName: 'execTransaction',
-          args: [
-            tx.to,
-            tx.value ? BigInt(tx.value) : 0n,
-            tx.data || '0x',
-            0,
-            0n,
-            0n,
-            0n,
-            zeroAddress,
-            zeroAddress,
-            signature,
-          ],
+          args: execArgs,
         }),
-      }));
+      };
 
-      const hashes = await sendTransactions(safeExecTxs.map(formatTxForHost));
+      const hashes = await sendTransactions([formatTxForHost(safeExecTx)]);
       lastTxHashes = hashes;
 
       const receipts = await waitForReceipts(hashes);
