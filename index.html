@@ -204,18 +204,15 @@
                         <span class="step-number">4</span>
                         <div>
                             <h2>Withdraw CRC</h2>
-                            <p class="step-desc">Send collected CRC back to your connected wallet</p>
+                            <p class="step-desc">Withdraw the org CRC balance back to your connected wallet
+                            </p>
                         </div>
                     </div>
-                    <p id="withdraw-available" class="balance-tag">Available: 0 CRC</p>
-                    <div class="field">
-                        <label for="withdraw-amount-circles">Amount (CRC)</label>
-                        <div class="input-row">
-                            <input type="text" id="withdraw-amount-circles" placeholder="0.0" autocomplete="off" />
-                            <button id="withdraw-max-btn" class="btn-secondary">Max</button>
-                        </div>
+                    <p id="withdraw-available" class="balance-tag">Available CRC balance: 0 CRC</p>
+                    <div id="withdraw-holdings-list">
+                        <p class="muted">Connect a wallet to prepare a full CRC withdrawal.</p>
                     </div>
-                    <button id="withdraw-balance-btn" disabled>Send funds to me</button>
+                    <button id="withdraw-all-btn" disabled>Withdraw Full Balance</button>
                 </div>
             </div>
 

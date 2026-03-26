@@ -50,6 +50,13 @@ const ORG_PREVIEW_IMAGE_QUALITIES = [0.9, 0.82, 0.74, 0.66, 0.58, 0.5, 0.42, 0.3
 const HUB_SAFE_TRANSFER_FROM_ABI = [
   {
     type: 'function',
+    name: 'toTokenId',
+    stateMutability: 'view',
+    inputs: [{ name: '_avatar', type: 'address' }],
+    outputs: [{ type: 'uint256' }],
+  },
+  {
+    type: 'function',
     name: 'safeTransferFrom',
     stateMutability: 'nonpayable',
     inputs: [
@@ -59,6 +66,15 @@ const HUB_SAFE_TRANSFER_FROM_ABI = [
       { name: 'value', type: 'uint256' },
       { name: 'data', type: 'bytes' },
     ],
+    outputs: [],
+  },
+];
+const ERC20_UNWRAP_ABI = [
+  {
+    type: 'function',
+    name: 'unwrap',
+    stateMutability: 'nonpayable',
+    inputs: [{ name: '_amount', type: 'uint256' }],
     outputs: [],
   },
 ];
@@ -141,10 +157,12 @@ let humanSdk = null;
 let orgSdk = null;
 let avatar = null;
 let activeOrgAddress = null;
+let activeOrgRunner = null;
 let lastTxHashes = [];
-let cachedWithdrawableAttoCircles = 0n;
+let cachedWithdrawableHoldings = [];
 let activeSafeOwners = [];
 let fundingInProgress = false;
+let withdrawInProgress = false;
 let trustSearchDebounceTimer = null;
 let trustSearchRequestId = 0;
 let selectedOrgImageDataUrl = '';
@@ -190,9 +208,8 @@ const fundFaucetHintEl = document.getElementById('fund-faucet-hint');
 const fundRecipientListEl = document.getElementById('fund-recipient-list');
 const fundAmountXdaiInput = document.getElementById('fund-amount-xdai');
 const withdrawAvailableEl = document.getElementById('withdraw-available');
-const withdrawAmountInput = document.getElementById('withdraw-amount-circles');
-const withdrawMaxBtn = document.getElementById('withdraw-max-btn');
-const withdrawBalanceBtn = document.getElementById('withdraw-balance-btn');
+const withdrawHoldingsListEl = document.getElementById('withdraw-holdings-list');
+const withdrawAllBtn = document.getElementById('withdraw-all-btn');
 
 /* ── Helpers ─────────────────────────────────────────────────────── */
 
@@ -252,15 +269,59 @@ function txLinks(hashes) {
     .join('<br>');
 }
 
-function getBalanceAttoCircles(balance) {
-  if (balance?.attoCircles === undefined || balance?.attoCircles === null) return 0n;
-  const amount = BigInt(balance.attoCircles);
-  if (amount > 0n) return amount;
-  return 0n;
+function getDirectTransferAmount(balance) {
+  if (!balance) return 0n;
+
+  const rawAmount =
+    balance.isWrapped && balance.isInflationary
+      ? balance.staticAttoCircles
+      : balance.attoCircles;
+
+  if (rawAmount === undefined || rawAmount === null) return 0n;
+
+  const amount = BigInt(rawAmount);
+  return amount > 0n ? amount : 0n;
 }
 
-function sumWithdrawableAttoCircles(balances) {
-  return balances.reduce((sum, balance) => sum + getBalanceAttoCircles(balance), 0n);
+function getNormalizedCrcAmount(balance) {
+  if (balance?.attoCircles === undefined || balance?.attoCircles === null) return 0n;
+  const amount = BigInt(balance.attoCircles);
+  return amount > 0n ? amount : 0n;
+}
+
+function buildWithdrawableHolding(balance) {
+  const unwrapAmount = getDirectTransferAmount(balance);
+  const crcAmount = getNormalizedCrcAmount(balance);
+  if (crcAmount <= 0n) return null;
+
+  const tokenAddress = typeof balance?.tokenAddress === 'string' && isAddress(balance.tokenAddress)
+    ? getAddress(balance.tokenAddress)
+    : null;
+  const tokenOwner = typeof balance?.tokenOwner === 'string' && isAddress(balance.tokenOwner)
+    ? getAddress(balance.tokenOwner)
+    : null;
+  const needsUnwrap = !!balance?.isWrapped;
+
+  const supported =
+    (!!tokenOwner && crcAmount > 0n && (
+      !needsUnwrap || (needsUnwrap && !!tokenAddress && unwrapAmount > 0n)
+    ));
+
+  return {
+    amount: crcAmount,
+    amountText: attoToCirclesString(crcAmount),
+    supported,
+    needsUnwrap,
+    unwrapAmount,
+    tokenAddress,
+    tokenOwner,
+  };
+}
+
+function buildWithdrawableHoldings(balances) {
+  return (balances || [])
+    .map((balance) => buildWithdrawableHolding(balance))
+    .filter(Boolean);
 }
 
 function rankTrustSearchResult(result) {
@@ -498,21 +559,60 @@ async function handleOrgImageChange() {
   }
 }
 
+function getSupportedWithdrawableHoldings() {
+  return cachedWithdrawableHoldings.filter((holding) => holding.supported && holding.amount > 0n);
+}
+
+function getSupportedWithdrawableTotal() {
+  return getSupportedWithdrawableHoldings().reduce((sum, holding) => sum + holding.amount, 0n);
+}
+
+function renderWithdrawHoldings() {
+  if (!withdrawHoldingsListEl) return;
+
+  if (!connectedAddress) {
+    withdrawHoldingsListEl.innerHTML = '<p class="muted">Connect a wallet to prepare a full CRC withdrawal.</p>';
+    return;
+  }
+
+  const supportedHoldings = getSupportedWithdrawableHoldings();
+
+  if (cachedWithdrawableHoldings.length === 0) {
+    withdrawHoldingsListEl.innerHTML = '<p class="muted">No token balances yet.</p>';
+    return;
+  }
+
+  if (supportedHoldings.length === 0) {
+    withdrawHoldingsListEl.innerHTML = '<p class="muted">Current balances cannot be normalized into withdrawable CRC.</p>';
+    return;
+  }
+
+  withdrawHoldingsListEl.innerHTML = '<p class="muted">Your full CRC balance will be transferred to your connected wallet in one approval.</p>';
+}
+
 function updateWithdrawAvailableText() {
   if (!withdrawAvailableEl) return;
-  const balanceText = `${attoToCirclesString(cachedWithdrawableAttoCircles)} CRC`;
-  withdrawAvailableEl.textContent = `Available: ${balanceText}`;
-  if (orgBalanceDisplay) orgBalanceDisplay.textContent = balanceText;
+
+  const supportedHoldings = getSupportedWithdrawableHoldings();
+  const total = getSupportedWithdrawableTotal();
+
+  if (supportedHoldings.length === 0) {
+    withdrawAvailableEl.textContent = 'Available CRC balance: 0 CRC';
+    if (orgBalanceDisplay) orgBalanceDisplay.textContent = '0 CRC';
+    return;
+  }
+
+  const totalText = `${attoToCirclesString(total)} CRC`;
+  withdrawAvailableEl.textContent = `Available CRC balance: ${totalText}`;
+  if (orgBalanceDisplay) orgBalanceDisplay.textContent = totalText;
 }
 
 function updateWithdrawButtonState() {
   const recipientValid = !!connectedAddress && isAddress(connectedAddress);
-  const parsedAmount = parseCirclesInputToAtto(withdrawAmountInput?.value || '');
-  const hasPositiveAmount = parsedAmount !== null && parsedAmount > 0n;
-  const amountWithinBalance =
-    parsedAmount !== null && parsedAmount > 0n && parsedAmount <= cachedWithdrawableAttoCircles;
-  const hasBalance = cachedWithdrawableAttoCircles > 0n;
-  withdrawBalanceBtn.disabled = !(recipientValid && hasPositiveAmount && amountWithinBalance && hasBalance);
+  const hasSupportedHoldings = getSupportedWithdrawableHoldings().length > 0;
+  if (withdrawAllBtn) {
+    withdrawAllBtn.disabled = !(recipientValid && hasSupportedHoldings) || withdrawInProgress;
+  }
 }
 
 function hasAdditionalSafeSigner() {
@@ -593,8 +693,10 @@ function showDisconnectedState() {
   registerBtn.disabled = true;
   safeSignersListEl.innerHTML = '<p class="muted">No signers loaded yet.</p>';
   activeSafeOwners = [];
-  cachedWithdrawableAttoCircles = 0n;
+  withdrawInProgress = false;
+  cachedWithdrawableHoldings = [];
   resetTrustSearchState('Connect a wallet to search.');
+  renderWithdrawHoldings();
   renderFundRecipientActions();
   updateWithdrawAvailableText();
   updateWithdrawButtonState();
@@ -1669,21 +1771,9 @@ async function removeTrust(addr) {
   }
 }
 
-function fillWithdrawMax() {
-  if (cachedWithdrawableAttoCircles <= 0n) return;
-  withdrawAmountInput.value = attoToCirclesString(cachedWithdrawableAttoCircles);
-  updateWithdrawButtonState();
-}
-
-async function withdrawBalance() {
+async function withdrawAllHoldings() {
   if (!connectedAddress || !isAddress(connectedAddress)) {
     showResult('error', 'Connect a valid recipient account first.');
-    return;
-  }
-
-  const parsedAmount = parseCirclesInputToAtto(withdrawAmountInput.value);
-  if (parsedAmount === null || parsedAmount <= 0n) {
-    showResult('error', 'Enter a valid CRC amount.');
     return;
   }
 
@@ -1692,42 +1782,80 @@ async function withdrawBalance() {
     return;
   }
 
-  if (cachedWithdrawableAttoCircles === 0n) {
+  if (getSupportedWithdrawableHoldings().length === 0) {
     await loadBalances();
   }
 
-  if (cachedWithdrawableAttoCircles === 0n) {
+  const holdings = getSupportedWithdrawableHoldings();
+  if (holdings.length === 0) {
     showResult('error', 'No withdrawable CRC balance.');
     return;
   }
 
-  if (parsedAmount > cachedWithdrawableAttoCircles) {
-    showResult(
-      'error',
-      `Requested amount exceeds available balance (${attoToCirclesString(cachedWithdrawableAttoCircles)} CRC).`
-    );
+  const recipient = getAddress(connectedAddress);
+  const transactions = [];
+
+  for (const holding of holdings) {
+    if (!holding.tokenOwner) continue;
+
+    if (holding.needsUnwrap && holding.tokenAddress) {
+      transactions.push({
+        to: holding.tokenAddress,
+        data: encodeFunctionData({
+          abi: ERC20_UNWRAP_ABI,
+          functionName: 'unwrap',
+          args: [holding.unwrapAmount],
+        }),
+        value: 0n,
+      });
+    }
+
+    const tokenId = await publicClient.readContract({
+      address: getAddress(HUB_V2_ADDRESS),
+      abi: HUB_SAFE_TRANSFER_FROM_ABI,
+      functionName: 'toTokenId',
+      args: [holding.tokenOwner],
+    });
+
+    transactions.push({
+      to: HUB_V2_ADDRESS,
+      data: encodeFunctionData({
+        abi: HUB_SAFE_TRANSFER_FROM_ABI,
+        functionName: 'safeTransferFrom',
+        args: [getAddress(activeOrgAddress), recipient, tokenId, holding.amount, '0x'],
+      }),
+      value: 0n,
+    });
+  }
+
+  if (transactions.length === 0) {
+    showResult('error', 'No supported token balances could be prepared for transfer.');
     return;
   }
 
-  const recipient = getAddress(connectedAddress);
-  withdrawBalanceBtn.disabled = true;
-  showResult('pending', 'Requesting approval…');
+  withdrawInProgress = true;
+  updateWithdrawButtonState();
+  showResult('pending', 'Requesting approval to withdraw full balance…');
 
   try {
     lastTxHashes = [];
-    await avatar.transfer.advanced(recipient, parsedAmount);
+    if (!activeOrgRunner) {
+      throw new Error('Organization wallet runner is not ready.');
+    }
+
+    await activeOrgRunner.sendTransaction(transactions);
 
     const links = lastTxHashes.length ? `<br>${txLinks(lastTxHashes)}` : '';
     showResult(
       'success',
-      `Sent ${attoToCirclesString(parsedAmount)} CRC to your account ${recipient}.${links}`
+      `Withdrew ${attoToCirclesString(getSupportedWithdrawableTotal())} CRC to your account ${recipient}.${links}`
     );
 
-    withdrawAmountInput.value = '';
     await loadBalances();
   } catch (err) {
-    showResult('error', `Send funds failed: ${decodeError(err)}`);
+    showResult('error', `Withdraw all failed: ${decodeError(err)}`);
   } finally {
+    withdrawInProgress = false;
     updateWithdrawButtonState();
   }
 }
@@ -1794,7 +1922,8 @@ async function loadTrustRelations() {
 
 async function loadBalances() {
   if (!avatar) {
-    cachedWithdrawableAttoCircles = 0n;
+    cachedWithdrawableHoldings = [];
+    renderWithdrawHoldings();
     updateWithdrawAvailableText();
     updateWithdrawButtonState();
     return;
@@ -1802,11 +1931,13 @@ async function loadBalances() {
 
   try {
     const balances = await avatar.balances.getTokenBalances();
-    cachedWithdrawableAttoCircles = sumWithdrawableAttoCircles(balances);
+    cachedWithdrawableHoldings = buildWithdrawableHoldings(balances);
+    renderWithdrawHoldings();
     updateWithdrawAvailableText();
     updateWithdrawButtonState();
   } catch (err) {
-    cachedWithdrawableAttoCircles = 0n;
+    cachedWithdrawableHoldings = [];
+    renderWithdrawHoldings();
     updateWithdrawAvailableText();
     updateWithdrawButtonState();
     showResult('error', `Could not load balances: ${decodeError(err)}`);
@@ -1815,6 +1946,7 @@ async function loadBalances() {
 
 async function loadOrganizationDashboard(orgAddress, runner, statusLabel) {
   activeOrgAddress = orgAddress;
+  activeOrgRunner = runner;
   orgSdk = new Sdk(undefined, runner);
   avatar = await orgSdk.getAvatar(orgAddress);
 
@@ -1849,12 +1981,18 @@ async function openOwnedOrganization(orgSafeAddress) {
 
   // Show the dashboard section immediately with loading placeholders
   dashboardSection.classList.remove('hidden');
+  activeOrgAddress = null;
+  activeOrgRunner = null;
+  cachedWithdrawableHoldings = [];
   orgNameDisplay.textContent = '—';
   orgAddrDisplay.textContent = truncAddr(orgSafeAddress);
   orgBalanceDisplay.textContent = '…';
   if (orgDashboardAvatarWrap) orgDashboardAvatarWrap.classList.add('hidden');
   safeSignersListEl.innerHTML = '<div class="shimmer-block"></div>';
   trustListEl.innerHTML = '<div class="shimmer-block"></div>';
+  if (withdrawHoldingsListEl) withdrawHoldingsListEl.innerHTML = '<div class="shimmer-block"></div>';
+  updateWithdrawAvailableText();
+  updateWithdrawButtonState();
   setStatus('Loading…', 'pending');
 
   try {
@@ -1890,13 +2028,17 @@ async function loadAvatarState(preserveResult = false) {
 
   avatar = null;
   orgSdk = null;
+  activeOrgRunner = null;
   activeOrgAddress = null;
   activeSafeOwners = [];
-  cachedWithdrawableAttoCircles = 0n;
+  withdrawInProgress = false;
+  cachedWithdrawableHoldings = [];
   trustAddrInput.value = '';
   resetTrustSearchState();
+  renderWithdrawHoldings();
   renderFundRecipientActions();
   updateWithdrawAvailableText();
+  updateWithdrawButtonState();
   updateFundFaucetButtonState();
 
   try {
@@ -1942,14 +2084,18 @@ onWalletChange(async (address) => {
 
   avatar = null;
   orgSdk = null;
+  activeOrgRunner = null;
   humanSdk = null;
   activeOrgAddress = null;
   activeSafeOwners = [];
   lastTxHashes = [];
-  cachedWithdrawableAttoCircles = 0n;
+  withdrawInProgress = false;
+  cachedWithdrawableHoldings = [];
   resetTrustSearchState('Connect a wallet to search.');
+  renderWithdrawHoldings();
   renderFundRecipientActions();
   updateWithdrawAvailableText();
+  updateWithdrawButtonState();
   updateFundFaucetButtonState();
 
   hideAllSections();
@@ -2004,9 +2150,7 @@ if (typeof window !== 'undefined') {
 registerBtn.addEventListener('click', registerOrganization);
 addTrustBtn.addEventListener('click', () => addTrust());
 addSafeSignerBtn.addEventListener('click', addSafeSigner);
-withdrawMaxBtn.addEventListener('click', fillWithdrawMax);
-withdrawBalanceBtn.addEventListener('click', withdrawBalance);
-withdrawAmountInput.addEventListener('input', updateWithdrawButtonState);
+withdrawAllBtn?.addEventListener('click', withdrawAllHoldings);
 fundAmountXdaiInput.addEventListener('input', updateFundFaucetButtonState);
 trustAddrInput.addEventListener('input', updateTrustSearchOptions);
 startCreateOrgBtn.addEventListener('click', () => {
