@@ -32,8 +32,7 @@ import {
 const RPC_URL = 'https://rpc.aboutcircles.com/';
 const RPC_FALLBACK_URLS = [
   RPC_URL,
-  'https://rpc.gnosischain.com',
-  'https://1rpc.io/gnosis',
+  'https://rpc.gnosischain.com'
 ];
 const SAFE_VERSION = '1.4.1';
 const SAFE_TX_SERVICE_URL = 'https://safe-transaction-gnosis-chain.safe.global';
@@ -178,6 +177,9 @@ let trustSearchDebounceTimer = null;
 let trustSearchRequestId = 0;
 let selectedOrgImageDataUrl = '';
 let orgImageProcessing = false;
+let orgFormMode = 'create';
+let orgFormBaseProfile = null;
+let orgFormEditingAddress = null;
 const sessionOrgSafesByOwner = new Map();
 
 /* ── DOM ─────────────────────────────────────────────────────────── */
@@ -192,6 +194,8 @@ const dashboardSection = document.getElementById('dashboard-section');
 const startCreateOrgBtn = document.getElementById('start-create-org-btn');
 const cancelRegisterBtn = document.getElementById('cancel-register-btn');
 const optionsOrgList = document.getElementById('options-org-list');
+const orgFormTitle = document.getElementById('org-form-title');
+const orgFormDescription = document.getElementById('org-form-description');
 
 const orgNameInput = document.getElementById('org-name');
 const orgDescInput = document.getElementById('org-description');
@@ -205,9 +209,11 @@ const backToOptionsBtn = document.getElementById('back-to-options-btn');
 
 const orgNameDisplay = document.getElementById('org-name-display');
 const orgAddrDisplay = document.getElementById('org-address-display');
+const orgDescriptionDisplay = document.getElementById('org-description-display');
 const orgBalanceDisplay = document.getElementById('org-balance-display');
 const orgDashboardAvatarWrap = document.getElementById('org-dashboard-avatar-wrap');
 const orgDashboardAvatar = document.getElementById('org-dashboard-avatar');
+const editOrgBtn = document.getElementById('edit-org-btn');
 const trustAddrInput = document.getElementById('trust-address');
 const addTrustBtn = document.getElementById('add-trust-btn');
 const trustSearchResultsEl = document.getElementById('trust-search-results');
@@ -221,6 +227,27 @@ const fundAmountXdaiInput = document.getElementById('fund-amount-xdai');
 const withdrawAvailableEl = document.getElementById('withdraw-available');
 const withdrawHoldingsListEl = document.getElementById('withdraw-holdings-list');
 const withdrawAllBtn = document.getElementById('withdraw-all-btn');
+
+const ORG_FORM_COPY = {
+  create: {
+    title: 'Create Organization',
+    description: 'Deploy a dedicated Safe for your organization and register it on the Circles Hub.',
+    submitLabel: 'Create Organization',
+    cancelLabel: 'Back',
+  },
+  edit: {
+    title: 'Edit Organization',
+    description: 'Update the organization name, description, and image stored in Circles metadata.',
+    submitLabel: 'Save Changes',
+    cancelLabel: 'Back to Organization',
+  },
+};
+const BACK_BUTTON_ICON_HTML = `
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+    <line x1="19" y1="12" x2="5" y2="12" />
+    <polyline points="12 19 5 12 12 5" />
+  </svg>
+`;
 
 /* ── Helpers ─────────────────────────────────────────────────────── */
 
@@ -369,9 +396,20 @@ function buildWithdrawableHoldings(balances) {
     .filter(Boolean);
 }
 
+function isAcceptedCrcTrustAvatarType(info) {
+  const avatarType = (info?.avatarType || info?.type || '').toLowerCase();
+  return avatarType.includes('group') || avatarType.includes('human');
+}
+
+function filterAcceptedCrcTrustResults(results) {
+  return (results || []).filter(
+    (entry) => entry?.address && isAddress(entry.address) && isAcceptedCrcTrustAvatarType(entry)
+  );
+}
+
 function rankTrustSearchResult(result) {
   const avatarType = (result?.avatarType || '').toLowerCase();
-  if (avatarType.includes('group') || avatarType.includes('org') || avatarType.includes('organization')) {
+  if (avatarType.includes('group')) {
     return 0;
   }
   return 1;
@@ -396,12 +434,14 @@ function resetTrustSearchState(message = '') {
 function renderTrustSearchResults(results) {
   if (!trustSearchResultsEl) return;
 
-  if (!results || results.length === 0) {
+  const filteredResults = filterAcceptedCrcTrustResults(results);
+
+  if (!filteredResults || filteredResults.length === 0) {
     trustSearchResultsEl.innerHTML = '<p class="muted">No matches found.</p>';
     return;
   }
 
-  const sorted = [...results].sort((a, b) => rankTrustSearchResult(a) - rankTrustSearchResult(b));
+  const sorted = [...filteredResults].sort((a, b) => rankTrustSearchResult(a) - rankTrustSearchResult(b));
   const uniqueByAddress = new Map();
   sorted.forEach((entry) => {
     if (!entry?.address || !isAddress(entry.address)) return;
@@ -417,9 +457,7 @@ function renderTrustSearchResults(results) {
     .map((entry) => {
       const name = entry?.name?.trim() || entry?.registeredName?.trim() || 'Unnamed avatar';
       const avatarType = (entry?.avatarType || '').toLowerCase();
-      const typeLabel = avatarType.includes('group') || avatarType.includes('org')
-        ? 'Group/Org'
-        : 'Human';
+      const typeLabel = avatarType.includes('group') ? 'Select Group' : 'Select Human';
 
       return `
         <div class="trust-item trust-search-item">
@@ -427,7 +465,7 @@ function renderTrustSearchResults(results) {
             <div class="org-name">${escapeHtml(name)}</div>
             <div class="muted mono">${escapeHtml(entry.address)}</div>
           </div>
-          <button class="btn-sm trust-select-btn" data-addr="${escapeHtml(entry.address)}">Use ${typeLabel}</button>
+          <button class="btn-sm trust-select-btn" data-addr="${escapeHtml(entry.address)}">${typeLabel}</button>
         </div>
       `;
     })
@@ -437,6 +475,19 @@ function renderTrustSearchResults(results) {
   trustSearchResultsEl.querySelectorAll('.trust-select-btn').forEach((btn) => {
     btn.addEventListener('click', () => addTrust(btn.dataset.addr));
   });
+}
+
+async function validateAcceptedCrcTrustAddress(address) {
+  if (!humanSdk) {
+    throw new Error('Connected account is not ready.');
+  }
+
+  const avatarInfo = await humanSdk.data.getAvatar(address).catch(() => null);
+  if (!avatarInfo || !isAcceptedCrcTrustAvatarType(avatarInfo)) {
+    throw new Error('Only human and group avatars can be accepted for CRC payments.');
+  }
+
+  return getAddress(address);
 }
 
 function attoToCirclesString(atto) {
@@ -464,6 +515,104 @@ function estimateFaucetXdaiPayout(amountAttoCircles, alreadyClaimedWei) {
 
 function updateRegisterButtonState() {
   registerBtn.disabled = !connectedAddress || !orgNameInput.value.trim() || orgImageProcessing;
+}
+
+function setOrgFormMode(mode) {
+  orgFormMode = mode === 'edit' ? 'edit' : 'create';
+  const copy = ORG_FORM_COPY[orgFormMode];
+  if (orgFormTitle) orgFormTitle.textContent = copy.title;
+  if (orgFormDescription) orgFormDescription.textContent = copy.description;
+  if (registerBtn) registerBtn.textContent = copy.submitLabel;
+  if (cancelRegisterBtn) {
+    cancelRegisterBtn.innerHTML = `${BACK_BUTTON_ICON_HTML}${copy.cancelLabel}`;
+  }
+}
+
+function resetOrgFormState() {
+  orgFormBaseProfile = null;
+  orgFormEditingAddress = null;
+  orgNameInput.value = '';
+  orgDescInput.value = '';
+  clearOrgImageSelection();
+}
+
+function populateOrgForm(profile = {}) {
+  orgNameInput.value = profile?.name || '';
+  orgDescInput.value = profile?.description || '';
+  selectedOrgImageDataUrl = profile?.previewImageUrl || profile?.imageUrl || '';
+  if (orgImageInput) orgImageInput.value = '';
+  renderOrgImagePreview(selectedOrgImageDataUrl);
+  updateRegisterButtonState();
+}
+
+function buildOrgProfileInput(baseProfile = null) {
+  const name = orgNameInput.value.trim();
+  if (!name) {
+    throw new Error('Organization name is required.');
+  }
+
+  const profile = { ...(baseProfile || {}), name };
+  const description = orgDescInput.value.trim();
+  if (description) {
+    profile.description = description;
+  } else {
+    delete profile.description;
+  }
+
+  const existingImageUrl = baseProfile?.previewImageUrl || baseProfile?.imageUrl || '';
+  if (!selectedOrgImageDataUrl) {
+    delete profile.previewImageUrl;
+    delete profile.imageUrl;
+  } else if (selectedOrgImageDataUrl !== existingImageUrl) {
+    profile.previewImageUrl = selectedOrgImageDataUrl;
+    delete profile.imageUrl;
+  }
+
+  return profile;
+}
+
+function openCreateOrgForm() {
+  setOrgFormMode('create');
+  resetOrgFormState();
+  hideResult();
+  hideAllSections();
+  registerSection.classList.remove('hidden');
+  updateRegisterButtonState();
+}
+
+async function openEditOrgForm() {
+  if (!avatar || !activeOrgAddress) {
+    showResult('error', 'Open an organization first.');
+    return;
+  }
+
+  showResult('pending', 'Loading organization details…');
+
+  try {
+    const fallbackName = orgNameDisplay.textContent?.trim();
+    const profile = (await avatar.profile.get()) || {
+      name: fallbackName && fallbackName !== '—' ? fallbackName : '',
+    };
+    orgFormBaseProfile = { ...profile };
+    orgFormEditingAddress = activeOrgAddress;
+    setOrgFormMode('edit');
+    populateOrgForm(orgFormBaseProfile);
+    hideAllSections();
+    registerSection.classList.remove('hidden');
+    hideResult();
+  } catch (err) {
+    showResult('error', `Could not load organization details: ${decodeError(err)}`);
+  }
+}
+
+function closeOrgForm() {
+  registerSection.classList.add('hidden');
+  hideResult();
+  if (orgFormMode === 'edit' && activeOrgAddress) {
+    dashboardSection.classList.remove('hidden');
+    return;
+  }
+  optionsSection.classList.remove('hidden');
 }
 
 function renderOrgImagePreview(dataUrl = '') {
@@ -735,7 +884,10 @@ function showDisconnectedState() {
   hideAllSections();
   hideResult();
   setStatus('Not connected', 'disconnected');
+  setOrgFormMode('create');
+  resetOrgFormState();
   registerBtn.disabled = true;
+  if (editOrgBtn) editOrgBtn.disabled = true;
   safeSignersListEl.innerHTML = '<p class="muted">No signers loaded yet.</p>';
   activeSafeOwners = [];
   withdrawInProgress = false;
@@ -751,6 +903,8 @@ function showDisconnectedState() {
 
 function showCreateOrgOptions(orgOptions = []) {
   hideAllSections();
+  setOrgFormMode('create');
+  resetOrgFormState();
   setStatus('Logged in', 'success');
   renderOwnedOrgOptions(orgOptions);
   optionsSection.classList.remove('hidden');
@@ -1035,7 +1189,7 @@ function deriveOrganizationAddressFromReceipts(receipts, proxyFactoryAddress, hu
           if (decoded?.eventName === 'ProxyCreation' && decoded.args?.proxy) {
             proxyAddress = getAddress(decoded.args.proxy);
           }
-        } catch {}
+        } catch { }
       }
 
       if (log.address.toLowerCase() === hubAddress.toLowerCase()) {
@@ -1049,7 +1203,7 @@ function deriveOrganizationAddressFromReceipts(receipts, proxyFactoryAddress, hu
           if (decoded?.eventName === 'RegisterOrganization' && decoded.args?.organization) {
             registeredOrgAddress = getAddress(decoded.args.organization);
           }
-        } catch {}
+        } catch { }
       }
     }
   }
@@ -1090,33 +1244,33 @@ function createSafeOwnerRunner(ownerAddress, safeAddress) {
       const execArgs =
         txs.length === 1
           ? [
-              txs[0].to,
-              txs[0].value ? BigInt(txs[0].value) : 0n,
-              txs[0].data || '0x',
-              SAFE_OPERATION_CALL,
-              0n,
-              0n,
-              0n,
-              zeroAddress,
-              zeroAddress,
-              signature,
-            ]
+            txs[0].to,
+            txs[0].value ? BigInt(txs[0].value) : 0n,
+            txs[0].data || '0x',
+            SAFE_OPERATION_CALL,
+            0n,
+            0n,
+            0n,
+            zeroAddress,
+            zeroAddress,
+            signature,
+          ]
           : [
-              multiSendAddress,
-              0n,
-              encodeFunctionData({
-                abi: multiSendAbi,
-                functionName: 'multiSend',
-                args: [encodeMultiSendTransactions(txs)],
-              }),
-              SAFE_OPERATION_DELEGATE_CALL,
-              0n,
-              0n,
-              0n,
-              zeroAddress,
-              zeroAddress,
-              signature,
-            ];
+            multiSendAddress,
+            0n,
+            encodeFunctionData({
+              abi: multiSendAbi,
+              functionName: 'multiSend',
+              args: [encodeMultiSendTransactions(txs)],
+            }),
+            SAFE_OPERATION_DELEGATE_CALL,
+            0n,
+            0n,
+            0n,
+            zeroAddress,
+            zeroAddress,
+            signature,
+          ];
 
       const safeExecTx = {
         to: safeAddress,
@@ -1140,6 +1294,42 @@ function createSafeOwnerRunner(ownerAddress, safeAddress) {
 }
 
 /* ── Register Organization ───────────────────────────────────────── */
+
+async function updateOrganizationDetails() {
+  const orgAddress = orgFormEditingAddress || activeOrgAddress;
+  if (!orgAddress || !avatar) {
+    showResult('error', 'Open an organization first.');
+    return;
+  }
+
+  if (!connectedAddress) {
+    showResult('error', 'Connect a wallet first.');
+    return;
+  }
+
+  registerBtn.disabled = true;
+  showResult('pending', 'Saving organization details…');
+
+  try {
+    lastTxHashes = [];
+    const profile = buildOrgProfileInput(orgFormBaseProfile);
+    await avatar.profile.update(profile);
+
+    const links = lastTxHashes.length ? `<br>${txLinks(lastTxHashes)}` : '';
+    const successHtml = `Organization details updated: <a href="https://explorer.aboutcircles.com/avatar/${orgAddress}/" target="_blank" rel="noopener">${orgAddress}</a>${links}`;
+
+    const reopened = await openOwnedOrganization(orgAddress, { preserveResult: true });
+    if (!reopened) return;
+
+    showResult('success', successHtml);
+    setOrgFormMode('create');
+    resetOrgFormState();
+  } catch (err) {
+    showResult('error', `Could not update organization details: ${decodeError(err)}`);
+  } finally {
+    updateRegisterButtonState();
+  }
+}
 
 async function registerOrganization() {
   const name = orgNameInput.value.trim();
@@ -1275,6 +1465,8 @@ async function registerOrganization() {
       );
 
       clearOrgImageSelection();
+      orgNameInput.value = '';
+      orgDescInput.value = '';
       updateRegisterButtonState();
       await loadAvatarState(true);
       return;
@@ -1312,6 +1504,8 @@ async function registerOrganization() {
     );
 
     clearOrgImageSelection();
+    orgNameInput.value = '';
+    orgDescInput.value = '';
     updateRegisterButtonState();
     await loadAvatarState(true);
   } catch (err) {
@@ -1326,6 +1520,15 @@ async function registerOrganization() {
   } finally {
     updateRegisterButtonState();
   }
+}
+
+async function submitOrganizationForm() {
+  if (orgFormMode === 'edit') {
+    await updateOrganizationDetails();
+    return;
+  }
+
+  await registerOrganization();
 }
 
 /* ── Safe Signers ────────────────────────────────────────────────── */
@@ -1723,16 +1926,17 @@ async function fundFaucetXdai(rawRecipientAddress) {
 async function resolveTrustAddress(rawInput) {
   const query = rawInput.trim();
   if (!query) {
-    throw new Error('Enter an address, username, or group name.');
+    throw new Error('Enter a human or group address, username, or name.');
   }
   if (isAddress(query)) {
-    return getAddress(query);
+    return await validateAcceptedCrcTrustAddress(getAddress(query));
   }
   if (!humanSdk) {
     throw new Error('Connected account is not ready.');
   }
 
-  const results = await humanSdk.rpc.profile.searchByAddressOrName(query, 40, 0);
+  const searchResults = await humanSdk.rpc.profile.searchByAddressOrName(query, 40, 0);
+  const results = filterAcceptedCrcTrustResults(searchResults);
   renderTrustSearchResults(results);
 
   const normalizedQuery = query.toLowerCase();
@@ -1742,19 +1946,19 @@ async function resolveTrustAddress(rawInput) {
     return name === normalizedQuery || registeredName === normalizedQuery;
   });
   if (exactByName?.address && isAddress(exactByName.address)) {
-    return getAddress(exactByName.address);
+    return await validateAcceptedCrcTrustAddress(getAddress(exactByName.address));
   }
 
-  const orgOrGroupResults = results.filter((entry) => {
+  const groupResults = results.filter((entry) => {
     const avatarType = (entry?.avatarType || '').toLowerCase();
-    return avatarType.includes('group') || avatarType.includes('org') || avatarType.includes('organization');
+    return avatarType.includes('group');
   });
-  const scopedResults = orgOrGroupResults.length > 0 ? orgOrGroupResults : results;
+  const scopedResults = groupResults.length > 0 ? groupResults : results;
   const firstMatch = scopedResults.find((entry) => entry?.address && isAddress(entry.address));
   if (!firstMatch) {
-    throw new Error('No matching username/group found.');
+    throw new Error('No matching human or group avatar found.');
   }
-  return getAddress(firstMatch.address);
+  return await validateAcceptedCrcTrustAddress(getAddress(firstMatch.address));
 }
 
 async function updateTrustSearchOptions() {
@@ -1779,7 +1983,8 @@ async function updateTrustSearchOptions() {
   trustSearchDebounceTimer = setTimeout(async () => {
     try {
       if (!humanSdk) return;
-      const results = await humanSdk.rpc.profile.searchByAddressOrName(query, 40, 0);
+      const rawResults = await humanSdk.rpc.profile.searchByAddressOrName(query, 40, 0);
+      const results = filterAcceptedCrcTrustResults(rawResults);
       if (requestId !== trustSearchRequestId) return;
       renderTrustSearchResults(results);
     } catch {
@@ -2027,12 +2232,21 @@ async function loadOrganizationDashboard(orgAddress, runner, statusLabel) {
   // Reset dashboard header to loading state
   orgNameDisplay.textContent = '—';
   orgAddrDisplay.textContent = orgAddress;
+  if (orgDescriptionDisplay) {
+    orgDescriptionDisplay.textContent = '';
+    orgDescriptionDisplay.classList.add('hidden');
+  }
   if (orgDashboardAvatarWrap) orgDashboardAvatarWrap.classList.add('hidden');
+  if (editOrgBtn) editOrgBtn.disabled = true;
   backToOptionsBtn.classList.remove('hidden');
 
   try {
     const profile = await avatar.profile.get();
     orgNameDisplay.textContent = profile?.name || '—';
+    if (orgDescriptionDisplay && profile?.description?.trim()) {
+      orgDescriptionDisplay.textContent = profile.description.trim();
+      orgDescriptionDisplay.classList.remove('hidden');
+    }
     const imageUrl = profile?.previewImageUrl || profile?.imageUrl || null;
     if (imageUrl && orgDashboardAvatar && orgDashboardAvatarWrap) {
       orgDashboardAvatar.src = imageUrl;
@@ -2040,13 +2254,16 @@ async function loadOrganizationDashboard(orgAddress, runner, statusLabel) {
     }
   } catch {
     orgNameDisplay.textContent = '—';
+  } finally {
+    if (editOrgBtn) editOrgBtn.disabled = false;
   }
 
   await Promise.allSettled([loadSafeSigners(), loadTrustRelations(), loadBalances()]);
 }
 
-async function openOwnedOrganization(orgSafeAddress) {
-  if (!connectedAddress || !humanSdk) return;
+async function openOwnedOrganization(orgSafeAddress, options = {}) {
+  if (!connectedAddress || !humanSdk) return false;
+  const preserveResult = !!options?.preserveResult;
 
   hideAllSections();
 
@@ -2057,8 +2274,13 @@ async function openOwnedOrganization(orgSafeAddress) {
   cachedWithdrawableHoldings = [];
   orgNameDisplay.textContent = '—';
   orgAddrDisplay.textContent = truncAddr(orgSafeAddress);
+  if (orgDescriptionDisplay) {
+    orgDescriptionDisplay.textContent = '';
+    orgDescriptionDisplay.classList.add('hidden');
+  }
   orgBalanceDisplay.textContent = '…';
   if (orgDashboardAvatarWrap) orgDashboardAvatarWrap.classList.add('hidden');
+  if (editOrgBtn) editOrgBtn.disabled = true;
   safeSignersListEl.innerHTML = '<div class="shimmer-block"></div>';
   trustListEl.innerHTML = '<div class="shimmer-block"></div>';
   if (withdrawHoldingsListEl) withdrawHoldingsListEl.innerHTML = '<div class="shimmer-block"></div>';
@@ -2078,9 +2300,11 @@ async function openOwnedOrganization(orgSafeAddress) {
       runner,
       'Organization'
     );
-    hideResult();
+    if (!preserveResult) hideResult();
+    return true;
   } catch (err) {
     showResult('error', `Could not open organization: ${decodeError(err)}`);
+    return false;
   }
 }
 
@@ -2218,25 +2442,18 @@ if (typeof window !== 'undefined') {
 
 /* ── Event Listeners ─────────────────────────────────────────────── */
 
-registerBtn.addEventListener('click', registerOrganization);
+registerBtn.addEventListener('click', submitOrganizationForm);
 addTrustBtn.addEventListener('click', () => addTrust());
 addSafeSignerBtn.addEventListener('click', addSafeSigner);
 withdrawAllBtn?.addEventListener('click', withdrawAllHoldings);
 fundAmountXdaiInput.addEventListener('input', updateFundFaucetButtonState);
 trustAddrInput.addEventListener('input', updateTrustSearchOptions);
-startCreateOrgBtn.addEventListener('click', () => {
-  optionsSection.classList.add('hidden');
-  registerSection.classList.remove('hidden');
-  updateRegisterButtonState();
-});
-cancelRegisterBtn.addEventListener('click', () => {
-  registerSection.classList.add('hidden');
-  hideResult();
-  optionsSection.classList.remove('hidden');
-});
+startCreateOrgBtn.addEventListener('click', openCreateOrgForm);
+cancelRegisterBtn.addEventListener('click', closeOrgForm);
 backToOptionsBtn.addEventListener('click', async () => {
   await loadAvatarState();
 });
+editOrgBtn?.addEventListener('click', openEditOrgForm);
 
 orgNameInput.addEventListener('input', () => {
   updateRegisterButtonState();
@@ -2278,6 +2495,7 @@ if (orgImageDropzone && orgImageInput) {
 /* ── Init ─────────────────────────────────────────────────────────── */
 
 showDisconnectedState();
+setOrgFormMode('create');
 updateWithdrawButtonState();
 updateFundFaucetButtonState();
 updateRegisterButtonState();

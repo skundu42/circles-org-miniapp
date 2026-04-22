@@ -605,7 +605,7 @@ button:disabled {
 
 .org-header-top {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 14px;
   padding-bottom: 10px;
   border-bottom: 1px solid var(--line-soft);
@@ -635,6 +635,18 @@ button:disabled {
   font-weight: 700;
   color: var(--ink);
   margin-bottom: 2px;
+}
+
+#edit-org-btn {
+  flex-shrink: 0;
+}
+
+.org-header-description {
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.5;
+  white-space: pre-wrap;
 }
 
 .muted {
@@ -756,11 +768,17 @@ button:disabled {
 
   .org-header-top {
     gap: 10px;
+    align-items: flex-start;
+    flex-wrap: wrap;
   }
 
   .org-dashboard-avatar {
     width: 40px;
     height: 40px;
     border-radius: 10px;
+  }
+
+  #edit-org-btn {
+    width: 100%;
   }
 }

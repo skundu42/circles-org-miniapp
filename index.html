@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Builders Org Manager</title>
+    <title>Circles Builder Org Manager</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -17,7 +17,7 @@
     <div class="app-shell">
         <div class="card">
             <div class="title-row">
-                <h1>Builders Org Manager</h1>
+                <h1>Circles Builder Org Manager</h1>
                 <span class="badge badge-disconnected" id="badge">Not connected</span>
             </div>
 
@@ -40,8 +40,8 @@
             <!-- ── Options Section ───────────────────────────────────── -->
             <div id="options-section" class="section hidden">
                 <p class="section-desc">
-                    Builder focused setup for shop/game miniapps. Pick an org or create one, then follow the
-                    step-by-step flow.
+                    Set up and manage your builder organization for Circles Miniapps. Manage an existing org or create a
+                    new one to configure payments, signers, funding, and withdrawals.
                 </p>
                 <div class="subsection">
                     <h2>Your Organizations</h2>
@@ -61,7 +61,8 @@
 
             <!-- ── Register Section ──────────────────────────────────── -->
             <div id="register-section" class="section hidden">
-                <p class="section-desc">
+                <h2 id="org-form-title">Create Organization</h2>
+                <p id="org-form-description" class="section-desc">
                     Deploy a dedicated Safe for your organization and register it on the Circles Hub.
                 </p>
 
@@ -122,7 +123,9 @@
                             <div id="org-name-display" class="org-header-name">—</div>
                             <span id="org-address-display" class="mono">—</span>
                         </div>
+                        <button id="edit-org-btn" type="button" class="btn-sm btn-secondary">Edit details</button>
                     </div>
+                    <p id="org-description-display" class="org-header-description hidden"></p>
                     <div class="info-row">
                         <span class="info-label">Balance</span>
                         <span id="org-balance-display" class="info-value balance-value">0 CRC</span>
