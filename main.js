@@ -498,6 +498,15 @@ function attoToCirclesString(atto) {
   return formatted.includes('.') ? formatted.replace(/\.?0+$/, '') : formatted;
 }
 
+function attoToBalanceDisplayString(atto, maxDecimals = 3) {
+  const formatted = formatEther(atto);
+  if (!formatted.includes('.')) return formatted;
+
+  const [whole, fraction = ''] = formatted.split('.');
+  const trimmedFraction = fraction.slice(0, maxDecimals).replace(/0+$/, '');
+  return trimmedFraction ? `${whole}.${trimmedFraction}` : whole;
+}
+
 function parseCirclesInputToAtto(value) {
   const trimmed = value.trim();
   if (!/^\d+(\.\d{1,18})?$/.test(trimmed)) return null;
@@ -864,7 +873,7 @@ function updateWithdrawAvailableText() {
     return;
   }
 
-  const totalText = `${attoToCirclesString(total)} CRC`;
+  const totalText = `${attoToBalanceDisplayString(total)} CRC`;
   withdrawAvailableEl.textContent = `Available CRC balance: ${totalText}`;
   if (orgBalanceDisplay) orgBalanceDisplay.textContent = totalText;
 }
