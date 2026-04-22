@@ -40,8 +40,8 @@
             <!-- ── Options Section ───────────────────────────────────── -->
             <div id="options-section" class="section hidden">
                 <p class="section-desc">
-                    Set up and manage your builder organization for Circles Miniapps. Manage an existing org or create a
-                    new one to configure payments, signers, funding, and withdrawals.
+                    Set up and manage Circles Organization accounts suitable best for builders to
+                    configure payments, signers, funding, and withdrawals all withinin one app.
                 </p>
                 <div class="subsection">
                     <h2>Your Organizations</h2>
@@ -207,15 +207,38 @@
                         <span class="step-number">4</span>
                         <div>
                             <h2>Withdraw CRC</h2>
-                            <p class="step-desc">Withdraw the org CRC balance back to your connected wallet
+                            <p class="step-desc">Withdraw the org CRC balance to your connected wallet or another
+                                address
                             </p>
                         </div>
+                    </div>
+                    <div class="field">
+                        <label for="withdraw-recipient-address">Withdraw To</label>
+                        <input type="text" id="withdraw-recipient-address"
+                            placeholder="Defaults to your connected wallet" autocomplete="off" />
+                    </div>
+                    <div class="field">
+                        <label for="withdraw-amount">Amount (CRC)</label>
+                        <div class="input-row amount-input-row">
+                            <input type="text" id="withdraw-amount" placeholder="0.0" autocomplete="off" />
+                            <button id="withdraw-max-btn" type="button" class="btn-secondary btn-icon"
+                                title="Use full available amount" aria-label="Use full available amount">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <ellipse cx="12" cy="6.5" rx="6.5" ry="2.5" />
+                                    <path d="M5.5 6.5v5c0 1.4 2.9 2.5 6.5 2.5s6.5-1.1 6.5-2.5v-5" />
+                                    <path d="M5.5 11.5v5c0 1.4 2.9 2.5 6.5 2.5s6.5-1.1 6.5-2.5v-5" />
+                                </svg>
+                            </button>
+                        </div>
+                        <p class="field-hint">Enter a withdrawal amount, or use the icon to fill the full available
+                            balance.</p>
                     </div>
                     <p id="withdraw-available" class="balance-tag">Available CRC balance: 0 CRC</p>
                     <div id="withdraw-holdings-list">
                         <p class="muted">Connect a wallet to prepare a full CRC withdrawal.</p>
                     </div>
-                    <button id="withdraw-all-btn" disabled>Withdraw Full Balance</button>
+                    <button id="withdraw-all-btn" disabled>Withdraw CRC</button>
                 </div>
             </div>
 

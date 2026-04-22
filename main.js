@@ -225,6 +225,9 @@ const fundFaucetHintEl = document.getElementById('fund-faucet-hint');
 const fundRecipientListEl = document.getElementById('fund-recipient-list');
 const fundAmountXdaiInput = document.getElementById('fund-amount-xdai');
 const withdrawAvailableEl = document.getElementById('withdraw-available');
+const withdrawRecipientAddressInput = document.getElementById('withdraw-recipient-address');
+const withdrawAmountInput = document.getElementById('withdraw-amount');
+const withdrawMaxBtn = document.getElementById('withdraw-max-btn');
 const withdrawHoldingsListEl = document.getElementById('withdraw-holdings-list');
 const withdrawAllBtn = document.getElementById('withdraw-all-btn');
 
@@ -505,6 +508,49 @@ function parseCirclesInputToAtto(value) {
   return whole * 10n ** ATTO_CIRCLES_DECIMALS + fraction;
 }
 
+function divideCeil(numerator, denominator) {
+  if (denominator <= 0n) throw new Error('Division denominator must be positive.');
+  return (numerator + denominator - 1n) / denominator;
+}
+
+function setDefaultWithdrawRecipient() {
+  if (!withdrawRecipientAddressInput) return;
+  withdrawRecipientAddressInput.value = connectedAddress && isAddress(connectedAddress)
+    ? getAddress(connectedAddress)
+    : '';
+}
+
+function fillWithdrawMaxAmount() {
+  if (!withdrawAmountInput) return;
+  const total = getSupportedWithdrawableTotal();
+  withdrawAmountInput.value = total > 0n ? attoToCirclesString(total) : '';
+  renderWithdrawHoldings();
+  updateWithdrawButtonState();
+}
+
+function getWithdrawRecipientValue() {
+  const typedValue = withdrawRecipientAddressInput?.value?.trim() || '';
+  if (typedValue) return typedValue;
+  return connectedAddress || '';
+}
+
+function getWithdrawRecipientAddress() {
+  const value = getWithdrawRecipientValue();
+  return value && isAddress(value) ? getAddress(value) : null;
+}
+
+function getWithdrawAmountAtto() {
+  const rawValue = withdrawAmountInput?.value?.trim() || '';
+  if (!rawValue) return null;
+  return parseCirclesInputToAtto(rawValue);
+}
+
+function isUsingConnectedWithdrawRecipient() {
+  if (!connectedAddress || !isAddress(connectedAddress)) return false;
+  const recipient = getWithdrawRecipientAddress();
+  return !!recipient && recipient.toLowerCase() === getAddress(connectedAddress).toLowerCase();
+}
+
 function estimateFaucetXdaiPayout(amountAttoCircles, alreadyClaimedWei) {
   if (alreadyClaimedWei >= FAUCET_CAP_WEI) return 0n;
   const remainingCap = FAUCET_CAP_WEI - alreadyClaimedWei;
@@ -781,7 +827,29 @@ function renderWithdrawHoldings() {
     return;
   }
 
-  withdrawHoldingsListEl.innerHTML = '<p class="muted">Your full CRC balance will be transferred to your connected wallet in one approval.</p>';
+  if (!getWithdrawRecipientAddress()) {
+    withdrawHoldingsListEl.innerHTML = '<p class="muted">Enter a valid withdrawal address.</p>';
+    return;
+  }
+
+  const amountAtto = getWithdrawAmountAtto();
+  if (amountAtto === null) {
+    withdrawHoldingsListEl.innerHTML = '';
+    return;
+  }
+
+  if (amountAtto <= 0n) {
+    withdrawHoldingsListEl.innerHTML = '<p class="muted">Enter an amount greater than 0 CRC.</p>';
+    return;
+  }
+
+  const total = getSupportedWithdrawableTotal();
+  if (amountAtto > total) {
+    withdrawHoldingsListEl.innerHTML = `<p class="muted">Amount exceeds the available balance of ${escapeHtml(attoToCirclesString(total))} CRC.</p>`;
+    return;
+  }
+
+  withdrawHoldingsListEl.innerHTML = '';
 }
 
 function updateWithdrawAvailableText() {
@@ -802,10 +870,19 @@ function updateWithdrawAvailableText() {
 }
 
 function updateWithdrawButtonState() {
-  const recipientValid = !!connectedAddress && isAddress(connectedAddress);
+  const recipientValid = !!getWithdrawRecipientAddress();
+  const amountAtto = getWithdrawAmountAtto();
+  const amountValid =
+    amountAtto !== null &&
+    amountAtto > 0n &&
+    amountAtto <= getSupportedWithdrawableTotal();
   const hasSupportedHoldings = getSupportedWithdrawableHoldings().length > 0;
   if (withdrawAllBtn) {
-    withdrawAllBtn.disabled = !(recipientValid && hasSupportedHoldings) || withdrawInProgress;
+    withdrawAllBtn.disabled =
+      !(!!connectedAddress && recipientValid && hasSupportedHoldings && amountValid) || withdrawInProgress;
+  }
+  if (withdrawMaxBtn) {
+    withdrawMaxBtn.disabled = !hasSupportedHoldings;
   }
 }
 
@@ -887,11 +964,14 @@ function showDisconnectedState() {
   setOrgFormMode('create');
   resetOrgFormState();
   registerBtn.disabled = true;
+  if (withdrawRecipientAddressInput) withdrawRecipientAddressInput.value = '';
+  if (withdrawAmountInput) withdrawAmountInput.value = '';
   if (editOrgBtn) editOrgBtn.disabled = true;
   safeSignersListEl.innerHTML = '<p class="muted">No signers loaded yet.</p>';
   activeSafeOwners = [];
   withdrawInProgress = false;
   cachedWithdrawableHoldings = [];
+  setDefaultWithdrawRecipient();
   resetTrustSearchState('Connect a wallet to search.');
   renderWithdrawHoldings();
   renderFundRecipientActions();
@@ -2049,7 +2129,7 @@ async function removeTrust(addr) {
 
 async function withdrawAllHoldings() {
   if (!connectedAddress || !isAddress(connectedAddress)) {
-    showResult('error', 'Connect a valid recipient account first.');
+    showResult('error', 'Connect your wallet first.');
     return;
   }
 
@@ -2068,19 +2148,41 @@ async function withdrawAllHoldings() {
     return;
   }
 
-  const recipient = getAddress(connectedAddress);
+  const recipient = getWithdrawRecipientAddress();
+  if (!recipient) {
+    showResult('error', 'Enter a valid withdrawal address.');
+    return;
+  }
+  const withdrawAmount = getWithdrawAmountAtto();
+  if (withdrawAmount === null || withdrawAmount <= 0n) {
+    showResult('error', 'Enter a valid CRC amount to withdraw.');
+    return;
+  }
+  const totalAvailable = getSupportedWithdrawableTotal();
+  if (withdrawAmount > totalAvailable) {
+    showResult('error', `Amount exceeds available balance of ${attoToCirclesString(totalAvailable)} CRC.`);
+    return;
+  }
+
   const transactions = [];
+  let remainingAmount = withdrawAmount;
 
   for (const holding of holdings) {
-    if (!holding.tokenOwner) continue;
+    if (!holding.tokenOwner || remainingAmount <= 0n) continue;
+    const transferAmount = holding.amount < remainingAmount ? holding.amount : remainingAmount;
+    if (transferAmount <= 0n) continue;
 
     if (holding.needsUnwrap && holding.tokenAddress) {
+      const unwrapAmount =
+        transferAmount === holding.amount
+          ? holding.unwrapAmount
+          : divideCeil(holding.unwrapAmount * transferAmount, holding.amount);
       transactions.push({
         to: holding.tokenAddress,
         data: encodeFunctionData({
           abi: ERC20_UNWRAP_ABI,
           functionName: 'unwrap',
-          args: [holding.unwrapAmount],
+          args: [unwrapAmount],
         }),
         value: 0n,
       });
@@ -2098,20 +2200,22 @@ async function withdrawAllHoldings() {
       data: encodeFunctionData({
         abi: HUB_SAFE_TRANSFER_FROM_ABI,
         functionName: 'safeTransferFrom',
-        args: [getAddress(activeOrgAddress), recipient, tokenId, holding.amount, '0x'],
+        args: [getAddress(activeOrgAddress), recipient, tokenId, transferAmount, '0x'],
       }),
       value: 0n,
     });
+
+    remainingAmount -= transferAmount;
   }
 
-  if (transactions.length === 0) {
+  if (transactions.length === 0 || remainingAmount > 0n) {
     showResult('error', 'No supported token balances could be prepared for transfer.');
     return;
   }
 
   withdrawInProgress = true;
   updateWithdrawButtonState();
-  showResult('pending', 'Requesting approval to withdraw full balance…');
+  showResult('pending', 'Requesting approval to withdraw CRC…');
 
   try {
     lastTxHashes = [];
@@ -2124,7 +2228,7 @@ async function withdrawAllHoldings() {
     const links = lastTxHashes.length ? `<br>${txLinks(lastTxHashes)}` : '';
     showResult(
       'success',
-      `Withdrew ${attoToCirclesString(getSupportedWithdrawableTotal())} CRC to your account ${recipient}.${links}`
+      `Withdrew ${attoToCirclesString(withdrawAmount)} CRC to ${recipient}.${links}`
     );
 
     await loadBalances();
@@ -2148,13 +2252,17 @@ async function loadTrustRelations() {
 
   try {
     const relations = await orgSdk.data.getTrustRelations(activeOrgAddress);
+    const outgoingRelations = (relations || []).filter((relation) => {
+      const relationType = (relation?.relation || '').toLowerCase();
+      return relationType === 'trusts' || relationType === 'mutuallytrusts';
+    });
 
-    if (!relations || relations.length === 0) {
+    if (!outgoingRelations || outgoingRelations.length === 0) {
       trustListEl.innerHTML = '<p class="muted">No trust relations yet.</p>';
       return;
     }
 
-    const normalizedTrustAddrs = relations
+    const normalizedTrustAddrs = outgoingRelations
       .map((r) => r.objectAvatar || r.trustee || r.address || (typeof r === 'string' ? r : ''))
       .filter((addr) => typeof addr === 'string' && isAddress(addr))
       .map((addr) => getAddress(addr));
@@ -2173,7 +2281,7 @@ async function loadTrustRelations() {
       })
     );
 
-    trustListEl.innerHTML = relations
+    trustListEl.innerHTML = outgoingRelations
       .map((r) => {
         const addr =
           r.objectAvatar || r.trustee || r.address || (typeof r === 'string' ? r : '');
@@ -2328,6 +2436,7 @@ async function loadAvatarState(preserveResult = false) {
   activeSafeOwners = [];
   withdrawInProgress = false;
   cachedWithdrawableHoldings = [];
+  if (withdrawAmountInput) withdrawAmountInput.value = '';
   trustAddrInput.value = '';
   resetTrustSearchState();
   renderWithdrawHoldings();
@@ -2386,6 +2495,7 @@ onWalletChange(async (address) => {
   lastTxHashes = [];
   withdrawInProgress = false;
   cachedWithdrawableHoldings = [];
+  if (withdrawAmountInput) withdrawAmountInput.value = '';
   resetTrustSearchState('Connect a wallet to search.');
   renderWithdrawHoldings();
   renderFundRecipientActions();
@@ -2401,6 +2511,7 @@ onWalletChange(async (address) => {
     return;
   }
 
+  setDefaultWithdrawRecipient();
   setStatus('Checking…', 'pending');
 
   try {
@@ -2448,6 +2559,15 @@ addSafeSignerBtn.addEventListener('click', addSafeSigner);
 withdrawAllBtn?.addEventListener('click', withdrawAllHoldings);
 fundAmountXdaiInput.addEventListener('input', updateFundFaucetButtonState);
 trustAddrInput.addEventListener('input', updateTrustSearchOptions);
+withdrawRecipientAddressInput?.addEventListener('input', () => {
+  renderWithdrawHoldings();
+  updateWithdrawButtonState();
+});
+withdrawAmountInput?.addEventListener('input', () => {
+  renderWithdrawHoldings();
+  updateWithdrawButtonState();
+});
+withdrawMaxBtn?.addEventListener('click', fillWithdrawMaxAmount);
 startCreateOrgBtn.addEventListener('click', openCreateOrgForm);
 cancelRegisterBtn.addEventListener('click', closeOrgForm);
 backToOptionsBtn.addEventListener('click', async () => {
