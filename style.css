@@ -108,6 +108,13 @@ h1 {
   color: var(--error-ink);
 }
 
+.trust-your-group {
+  margin-left: 6px;
+  vertical-align: middle;
+  padding: 2px 6px;
+  font-size: 10px;
+}
+
 /* ── Sections ───────────────────────────────────────────────────── */
 
 .section {
@@ -497,6 +504,21 @@ button:disabled {
 
 .trust-item:last-child {
   border-bottom: none;
+}
+
+.trust-item-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+}
+
+.trust-item-label .trust-addr {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .holding-item-info {

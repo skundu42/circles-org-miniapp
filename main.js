@@ -175,6 +175,7 @@ let fundingInProgress = false;
 let withdrawInProgress = false;
 let trustSearchDebounceTimer = null;
 let trustSearchRequestId = 0;
+let userGroupAddresses = new Set();
 let selectedOrgImageDataUrl = '';
 let orgImageProcessing = false;
 let orgFormMode = 'create';
@@ -412,10 +413,34 @@ function filterAcceptedCrcTrustResults(results) {
 
 function rankTrustSearchResult(result) {
   const avatarType = (result?.avatarType || '').toLowerCase();
+  const address = result?.address ? result.address.toLowerCase() : '';
   if (avatarType.includes('group')) {
-    return 0;
+    return userGroupAddresses.has(address) ? 0 : 1;
   }
-  return 1;
+  return 2;
+}
+
+async function refreshUserGroupMemberships(sdkInstance, ownerAddress) {
+  const requestForAddress = ownerAddress ? ownerAddress.toLowerCase() : null;
+  if (!sdkInstance || !requestForAddress) {
+    userGroupAddresses = new Set();
+    return;
+  }
+  try {
+    const query = sdkInstance.rpc.group.getGroupMemberships(getAddress(ownerAddress), 50);
+    await query.queryNextPage();
+    if (!connectedAddress || connectedAddress.toLowerCase() !== requestForAddress) return;
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const next = new Set();
+    (query.currentPage?.results || []).forEach((row) => {
+      if (!row?.group || !isAddress(row.group)) return;
+      if (row.expiryTime && Number(row.expiryTime) < nowSeconds) return;
+      next.add(row.group.toLowerCase());
+    });
+    userGroupAddresses = next;
+  } catch (err) {
+    console.warn('Failed to load user group memberships', err);
+  }
 }
 
 function clearTrustSearchResults(message = '') {
@@ -461,11 +486,16 @@ function renderTrustSearchResults(results) {
       const name = entry?.name?.trim() || entry?.registeredName?.trim() || 'Unnamed avatar';
       const avatarType = (entry?.avatarType || '').toLowerCase();
       const typeLabel = avatarType.includes('group') ? 'Select Group' : 'Select Human';
+      const isUserGroup =
+        avatarType.includes('group') && userGroupAddresses.has(entry.address.toLowerCase());
+      const userGroupBadge = isUserGroup
+        ? '<span class="badge badge-success trust-your-group">Your group</span>'
+        : '';
 
       return `
         <div class="trust-item trust-search-item">
           <div>
-            <div class="org-name">${escapeHtml(name)}</div>
+            <div class="org-name">${escapeHtml(name)} ${userGroupBadge}</div>
             <div class="muted mono">${escapeHtml(entry.address)}</div>
           </div>
           <button class="btn-sm trust-select-btn" data-addr="${escapeHtml(entry.address)}">${typeLabel}</button>
@@ -2297,9 +2327,15 @@ async function loadTrustRelations() {
         if (!isAddress(addr)) return '';
         const normalizedAddr = getAddress(addr);
         const displayLabel = trustNameByAddr.get(normalizedAddr.toLowerCase()) || normalizedAddr;
+        const userGroupBadge = userGroupAddresses.has(normalizedAddr.toLowerCase())
+          ? '<span class="badge badge-success trust-your-group">Your group</span>'
+          : '';
         return `
           <div class="trust-item">
-            <a class="trust-addr" href="https://explorer.aboutcircles.com/avatar/${normalizedAddr}/" target="_blank" title="${escapeHtml(normalizedAddr)}">${escapeHtml(displayLabel)}</a>
+            <div class="trust-item-label">
+              <a class="trust-addr" href="https://explorer.aboutcircles.com/avatar/${normalizedAddr}/" target="_blank" title="${escapeHtml(normalizedAddr)}">${escapeHtml(displayLabel)}</a>
+              ${userGroupBadge}
+            </div>
             <button class="btn-sm btn-danger" data-addr="${escapeHtml(normalizedAddr)}">Untrust</button>
           </div>`;
       })
@@ -2504,6 +2540,7 @@ onWalletChange(async (address) => {
   lastTxHashes = [];
   withdrawInProgress = false;
   cachedWithdrawableHoldings = [];
+  userGroupAddresses = new Set();
   if (withdrawAmountInput) withdrawAmountInput.value = '';
   resetTrustSearchState('Connect a wallet to search.');
   renderWithdrawHoldings();
@@ -2525,7 +2562,10 @@ onWalletChange(async (address) => {
 
   try {
     humanSdk = new Sdk(undefined, createRunner(connectedAddress));
-    await loadAvatarState();
+    await Promise.all([
+      refreshUserGroupMemberships(humanSdk, connectedAddress),
+      loadAvatarState(),
+    ]);
   } catch (err) {
     if (isPasskeyAutoConnectError(err)) {
       setStatus('Wallet reconnect required', 'warning');
